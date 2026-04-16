@@ -3,6 +3,9 @@
 > A bash script that safely cleans up local branches after a PR/MR is merged.
 
 **English** | **[한국어](README.ko.md)**
+---
+![Git](https://img.shields.io/badge/Git-F05032?logo=git&logoColor=white)
+![Shell](https://img.shields.io/badge/-Shell-4EAA25?logo=gnu-bash&logoColor=white)
 
 ---
 

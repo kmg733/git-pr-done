@@ -3,6 +3,9 @@
 > PR/MR 머지 완료 후 로컬 브랜치를 한 번에 안전하게 정리하는 bash 스크립트
 
 **[English](README.md)** | **한국어**
+---
+![Git](https://img.shields.io/badge/Git-F05032?logo=git&logoColor=white)
+![Shell](https://img.shields.io/badge/-Shell-4EAA25?logo=gnu-bash&logoColor=white)
 
 ---
 
