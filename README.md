@@ -1,8 +1,63 @@
 # git-pr-done
 
 > PR/MR 머지 완료 후 로컬 브랜치를 한 번에 안전하게 정리하는 bash 스크립트
+> A bash script that safely cleans up local branches after a PR/MR is merged.
 
-PR이 원격에서 머지되고 나면, 로컬에는 쓸모없어진 피처 브랜치와 stale한 원격 참조가 남습니다. `git-pr-done`은 이 4단계를 안전장치와 함께 한 번에 처리합니다.
+**[한국어](#한국어)** | **[English](#english)**
+
+---
+
+## Quick Start / 빠른 시작
+
+### 1. Install / 설치 (macOS & Linux)
+
+```bash
+mkdir -p ~/.local/bin && \
+  curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
+  -o ~/.local/bin/git-pr-done && \
+  chmod +x ~/.local/bin/git-pr-done
+```
+
+Windows (Git Bash):
+
+```bash
+mkdir -p ~/bin && \
+  curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
+  -o ~/bin/git-pr-done && \
+  chmod +x ~/bin/git-pr-done
+```
+
+### 2. Use / 사용
+
+```bash
+# After your PR is merged on the remote
+# 원격에서 PR이 머지된 후:
+git pr-done
+```
+
+That's it. The script will prune remote refs, checkout `develop`, pull, and delete your merged branch — with safety checks.
+이것으로 끝. 원격 참조 정리, `develop` 체크아웃, pull, 머지된 브랜치 삭제를 안전하게 한 번에 수행합니다.
+
+### 3. Common Options / 자주 쓰는 옵션
+
+```bash
+git pr-done --dry-run           # Preview only / 시뮬레이션만
+git pr-done -t master           # Target branch = master / 타겟 변경
+git pr-done --force             # For squash/rebase merges / squash 머지 대응
+git pr-done -h                  # Show help / 도움말
+```
+
+> **Tip**: Use `git pr-done -h` (not `--help`) — git intercepts `--help` for man pages.
+> git은 `--help`를 man 페이지용으로 가로채므로 `-h` 를 사용하세요.
+
+자세한 설치/옵션/안전장치 설명은 아래를 참조하세요.
+See below for detailed installation, options, and safety guards.
+
+---
+
+## 한국어
+
+PR이 원격에서 머지되고 나면, 로컬에는 쓸모없어진 피처 브랜치와 stale한 원격 참조가 남습니다. `git-pr-done`은 아래 4단계를 안전장치와 함께 한 번에 처리합니다.
 
 ```bash
 git remote prune origin      # 원격에서 삭제된 참조 정리
@@ -11,7 +66,7 @@ git pull --ff-only            # 최신 커밋 동기화
 git branch -d <feature>       # 머지된 브랜치 삭제
 ```
 
-## 특징
+### 특징
 
 - **플래그 기반 인터페이스** — 괄호/한글 포함 브랜치명도 안전하게 처리
 - **안전장치** — dirty tree 감지, 보호 브랜치 블랙리스트, 실제 머지 여부 검증
@@ -19,40 +74,123 @@ git branch -d <feature>       # 머지된 브랜치 삭제
 - **`git pr-done` 서브커맨드** — git 명령처럼 자연스럽게 호출
 - **의존성 없음** — 순수 bash (git 외 추가 도구 불필요)
 
-## 설치
+### 요구사항
 
-### 원라이너
+- Bash 3.2+
+- Git 2.x+
+
+### 설치
+
+#### macOS
+
+macOS는 기본으로 bash와 git이 설치되어 있습니다. git이 없다면 `xcode-select --install` 또는 [Homebrew](https://brew.sh)로 설치하세요.
 
 ```bash
+# 1) 스크립트 다운로드 및 설치
+mkdir -p ~/.local/bin
 curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
-  -o ~/.local/bin/git-pr-done && chmod +x ~/.local/bin/git-pr-done
-```
+  -o ~/.local/bin/git-pr-done
+chmod +x ~/.local/bin/git-pr-done
 
-`~/.local/bin`이 PATH에 포함되어 있는지 확인하세요:
-
-```bash
+# 2) PATH 확인 (~/.local/bin이 없으면 zshrc에 추가)
 echo $PATH | tr ':' '\n' | grep -q "$HOME/.local/bin" || \
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+
+# 3) 셸 재시작 후 확인
+source ~/.zshrc
+git pr-done --version
 ```
 
-### 수동 설치
+대체 경로: `/usr/local/bin/git-pr-done` (Homebrew 사용자, sudo 필요 없음)
+
+#### Linux
+
+대부분의 배포판에 bash와 git이 기본 포함됩니다. 없다면:
 
 ```bash
-git clone https://github.com/kmg733/git-pr-done.git
-cd git-pr-done
-install -m 755 git-pr-done ~/.local/bin/git-pr-done
+# Debian/Ubuntu
+sudo apt install git
+
+# RHEL/Fedora/CentOS
+sudo dnf install git
+
+# Arch
+sudo pacman -S git
 ```
 
-## 사용법
+스크립트 설치:
 
-### 기본 사용
+```bash
+# 1) 스크립트 다운로드 및 설치
+mkdir -p ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
+  -o ~/.local/bin/git-pr-done
+chmod +x ~/.local/bin/git-pr-done
+
+# 2) PATH 확인 (~/.local/bin이 없으면 bashrc에 추가)
+echo $PATH | tr ':' '\n' | grep -q "$HOME/.local/bin" || \
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+
+# 3) 셸 재시작 후 확인
+source ~/.bashrc
+git pr-done --version
+```
+
+zsh 사용 시: `~/.bashrc` 대신 `~/.zshrc` 사용.
+
+#### Windows
+
+Windows에서는 **Git Bash**(Git for Windows에 포함) 또는 **WSL**을 사용해야 합니다. PowerShell/CMD에서는 동작하지 않습니다.
+
+##### 옵션 1: Git Bash (권장)
+
+1. [Git for Windows](https://git-scm.com/download/win) 설치 (Git Bash 포함)
+2. **Git Bash** 실행
+3. 아래 명령 실행:
+
+```bash
+# 1) 스크립트 다운로드 및 설치
+mkdir -p ~/bin
+curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
+  -o ~/bin/git-pr-done
+chmod +x ~/bin/git-pr-done
+
+# 2) Git Bash는 ~/bin을 PATH에 자동 포함 → 추가 설정 불필요
+git pr-done --version
+```
+
+> **참고**: Git Bash는 `~/bin`(= `C:\Users\<USER>\bin`)을 자동으로 PATH에 포함합니다.
+
+##### 옵션 2: WSL (Ubuntu)
+
+WSL(Windows Subsystem for Linux)이 설치되어 있다면 **Linux 섹션** 지침을 그대로 따르세요.
+
+```bash
+# PowerShell에서 WSL 실행
+wsl
+
+# 이후 Linux 섹션 설치 명령 실행
+```
+
+##### 옵션 3: 수동 설치 (Git Bash)
+
+```bash
+cd ~/Downloads
+git clone https://github.com/kmg733/git-pr-done.git
+cp git-pr-done/git-pr-done ~/bin/
+chmod +x ~/bin/git-pr-done
+```
+
+### 사용법
+
+#### 기본
 
 ```bash
 # 현재 브랜치를 develop에 머지한 후:
 git pr-done
 ```
 
-### 옵션
+#### 옵션
 
 | 플래그 | 용도 | 기본값 |
 |--------|------|--------|
@@ -64,7 +202,7 @@ git pr-done
 | `-h, --help` | 도움말 출력 | — |
 | `-V, --version` | 버전 출력 | — |
 
-### 예시
+#### 예시
 
 ```bash
 # 기본: 현재 브랜치 삭제 후 develop으로 이동
@@ -74,7 +212,7 @@ git pr-done
 git pr-done --target master
 git pr-done -t release/2026-H1
 
-# 특정 브랜치 삭제 (다른 브랜치 체크아웃 상태에서도 가능)
+# 특정 브랜치 삭제
 git pr-done --branch 'feature-name(ISSUE-123)'
 
 # 시뮬레이션만 (실제 변경 없음)
@@ -89,7 +227,7 @@ git pr-done -y
 
 > **참고**: git은 `git <cmd> --help`를 man 페이지로 가로챕니다. 도움말은 `git pr-done -h` 또는 `git-pr-done --help`를 사용하세요.
 
-## 안전장치
+### 안전장치
 
 스크립트는 다음 상황에서 자동으로 중단합니다:
 
@@ -98,9 +236,9 @@ git pr-done -y
 - **타겟 == 삭제 대상** — 자기 자신을 삭제할 수 없음
 - **브랜치 미존재** — 타겟 또는 삭제 대상 브랜치가 없음
 - **Detached HEAD** — 정상 브랜치 상태가 아님
-- **머지 미확인** — `--force` 없이는 실제 머지된 브랜치만 삭제 (squash/rebase 머지 시 `--force` 필요)
+- **머지 미확인** — `--force` 없이는 실제 머지된 브랜치만 삭제
 
-## Exit Codes
+### Exit Codes
 
 | 코드 | 의미 |
 |------|------|
@@ -110,7 +248,7 @@ git pr-done -y
 | `3` | 사용자 취소 |
 | `4` | git 명령 실행 실패 |
 
-## 권장 워크플로우
+### 권장 워크플로우
 
 ```bash
 # 1. 피처 브랜치에서 작업
@@ -124,11 +262,219 @@ gh pr create   # 또는 GitLab MR
 git pr-done    # 한 줄로 정리 완료
 ```
 
-## 요구사항
+### 라이선스
 
-- Bash 3.2+ (macOS 기본 내장 bash 호환)
+[MIT](LICENSE)
+
+---
+
+## English
+
+After a PR is merged on the remote, your local clone is left with an obsolete feature branch and stale remote-tracking references. `git-pr-done` handles this cleanup in one shot, with safety checks baked in.
+
+```bash
+git remote prune origin      # Prune deleted remote refs
+git checkout develop          # Switch to the target branch
+git pull --ff-only            # Sync latest commits
+git branch -d <feature>       # Delete the merged branch
+```
+
+### Features
+
+- **Flag-based interface** — Safely handles branch names with parentheses or Unicode characters
+- **Safety guards** — Dirty tree detection, protected-branch blacklist, actual-merge verification
+- **Dry-run mode** — Simulate before executing
+- **`git pr-done` subcommand** — Invoke naturally like any git command
+- **No dependencies** — Pure bash (only requires git)
+
+### Requirements
+
+- Bash 3.2+
 - Git 2.x+
 
-## 라이선스
+### Installation
+
+#### macOS
+
+macOS ships with bash and git. If git is missing, install via `xcode-select --install` or [Homebrew](https://brew.sh).
+
+```bash
+# 1) Download and install
+mkdir -p ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
+  -o ~/.local/bin/git-pr-done
+chmod +x ~/.local/bin/git-pr-done
+
+# 2) Ensure ~/.local/bin is on PATH
+echo $PATH | tr ':' '\n' | grep -q "$HOME/.local/bin" || \
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+
+# 3) Reload shell and verify
+source ~/.zshrc
+git pr-done --version
+```
+
+Alternative location: `/usr/local/bin/git-pr-done` (Homebrew layout; no sudo needed if owned).
+
+#### Linux
+
+Most distributions include bash and git by default. If not:
+
+```bash
+# Debian/Ubuntu
+sudo apt install git
+
+# RHEL/Fedora/CentOS
+sudo dnf install git
+
+# Arch
+sudo pacman -S git
+```
+
+Install the script:
+
+```bash
+# 1) Download and install
+mkdir -p ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
+  -o ~/.local/bin/git-pr-done
+chmod +x ~/.local/bin/git-pr-done
+
+# 2) Ensure ~/.local/bin is on PATH
+echo $PATH | tr ':' '\n' | grep -q "$HOME/.local/bin" || \
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+
+# 3) Reload shell and verify
+source ~/.bashrc
+git pr-done --version
+```
+
+If you use zsh, replace `~/.bashrc` with `~/.zshrc`.
+
+#### Windows
+
+On Windows you need **Git Bash** (bundled with Git for Windows) or **WSL**. It does not run in PowerShell or CMD.
+
+##### Option 1: Git Bash (Recommended)
+
+1. Install [Git for Windows](https://git-scm.com/download/win) (includes Git Bash)
+2. Launch **Git Bash**
+3. Run:
+
+```bash
+# 1) Download and install
+mkdir -p ~/bin
+curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
+  -o ~/bin/git-pr-done
+chmod +x ~/bin/git-pr-done
+
+# 2) Git Bash auto-adds ~/bin to PATH — no further setup needed
+git pr-done --version
+```
+
+> **Note**: Git Bash automatically prepends `~/bin` (= `C:\Users\<USER>\bin`) to PATH.
+
+##### Option 2: WSL (Ubuntu)
+
+If you have WSL (Windows Subsystem for Linux), follow the **Linux** section as-is.
+
+```powershell
+# From PowerShell
+wsl
+
+# Then follow the Linux install steps
+```
+
+##### Option 3: Manual (Git Bash)
+
+```bash
+cd ~/Downloads
+git clone https://github.com/kmg733/git-pr-done.git
+cp git-pr-done/git-pr-done ~/bin/
+chmod +x ~/bin/git-pr-done
+```
+
+### Usage
+
+#### Basic
+
+```bash
+# After your current branch is merged into develop:
+git pr-done
+```
+
+#### Options
+
+| Flag | Purpose | Default |
+|------|---------|---------|
+| `-t, --target <BRANCH>` | Target branch | `develop` |
+| `-b, --branch <BRANCH>` | Branch to delete | current branch |
+| `-n, --dry-run` | Simulate without executing | `false` |
+| `-f, --force` | Force delete (for squash/rebase merges) | `false` |
+| `-y, --yes` | Skip confirmation prompt | `false` |
+| `-h, --help` | Show help | — |
+| `-V, --version` | Show version | — |
+
+#### Examples
+
+```bash
+# Default: delete current branch, switch to develop
+git pr-done
+
+# Specify target branch
+git pr-done --target master
+git pr-done -t release/2026-H1
+
+# Delete a specific branch
+git pr-done --branch 'feature-name(ISSUE-123)'
+
+# Dry-run only
+git pr-done --dry-run
+
+# Force-delete a squash/rebase-merged branch
+git pr-done --force
+
+# Skip confirmation
+git pr-done -y
+```
+
+> **Note**: Git intercepts `git <cmd> --help` and opens a man page. Use `git pr-done -h` or `git-pr-done --help` instead.
+
+### Safety Guards
+
+The script aborts automatically when:
+
+- **Dirty tree** — there are uncommitted changes
+- **Protected branch** — attempting to delete `master`, `main`, `develop`, `production`, `staging`, `release/*`, or `hotfix/*`
+- **Target == deletion target** — you can't delete the branch you're switching to
+- **Branch missing** — target or deletion target doesn't exist
+- **Detached HEAD** — not on a named branch
+- **Not actually merged** — without `--force`, only truly merged branches get deleted
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Generic error (not a git repo, missing branch, etc.) |
+| `2` | Pre-flight validation failed (dirty tree, protected branch, etc.) |
+| `3` | User canceled |
+| `4` | Git command failed during execution |
+
+### Recommended Workflow
+
+```bash
+# 1. Work on a feature branch
+git checkout -b feature/awesome-feature
+# ... edit, commit, push ...
+
+# 2. Open a PR/MR and get it reviewed
+gh pr create   # or GitLab MR
+
+# 3. Once merged on the remote
+git pr-done    # One-liner cleanup
+```
+
+### License
 
 [MIT](LICENSE)
