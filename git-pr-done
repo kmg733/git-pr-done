@@ -1,0 +1,346 @@
+#!/usr/bin/env bash
+#
+# git-pr-done — PR/MR 머지 완료 후 로컬 브랜치 정리
+#
+# 설치됨: ~/.local/bin/git-pr-done (PATH 포함)
+# 호출: git pr-done [options]  또는  git-pr-done [options]
+#
+set -euo pipefail
+
+# ─────────────────────────────────────────────────────────────
+# 상수
+# ─────────────────────────────────────────────────────────────
+readonly SCRIPT_NAME="git-pr-done"
+readonly VERSION="1.0.0"
+readonly PROTECTED_BRANCHES=(master main develop production staging)
+readonly PROTECTED_PREFIXES=(release/ hotfix/)
+
+# 색상 (TTY일 때만)
+if [[ -t 1 ]]; then
+    readonly C_RED=$'\033[0;31m'
+    readonly C_GREEN=$'\033[0;32m'
+    readonly C_YELLOW=$'\033[0;33m'
+    readonly C_BLUE=$'\033[0;34m'
+    readonly C_BOLD=$'\033[1m'
+    readonly C_DIM=$'\033[2m'
+    readonly C_NC=$'\033[0m'
+else
+    readonly C_RED='' C_GREEN='' C_YELLOW='' C_BLUE='' C_BOLD='' C_DIM='' C_NC=''
+fi
+
+# ─────────────────────────────────────────────────────────────
+# 도움말
+# ─────────────────────────────────────────────────────────────
+usage() {
+    cat <<EOF
+${C_BOLD}${SCRIPT_NAME}${C_NC} — PR/MR 머지 완료 후 로컬 브랜치 정리 (v${VERSION})
+
+${C_BOLD}USAGE${C_NC}
+    git pr-done [OPTIONS]
+    git-pr-done [OPTIONS]
+
+${C_BOLD}DESCRIPTION${C_NC}
+    PR/MR이 원격에서 머지된 후 로컬을 깔끔하게 정리합니다.
+    아래 4단계를 안전장치와 함께 순차 실행합니다.
+
+      1) git remote prune origin           # 원격에서 삭제된 참조 정리
+      2) git checkout <TARGET>             # 타겟 브랜치로 이동
+      3) git pull --ff-only                # 최신 커밋 동기화
+      4) git branch -d <MERGED>            # 머지된 로컬 브랜치 삭제
+
+${C_BOLD}OPTIONS${C_NC}
+    -t, --target <BRANCH>    이동/동기화할 타겟 브랜치 (기본: ${C_GREEN}develop${C_NC})
+    -b, --branch <BRANCH>    삭제할 머지 완료 브랜치
+                             (기본: 스크립트 실행 시점의 현재 브랜치)
+    -n, --dry-run            실제 실행 없이 명령어만 출력
+    -f, --force              머지 검증 실패 시에도 강제 삭제 (-D 사용)
+                             squash/rebase 머지된 브랜치 정리에 유용
+    -y, --yes                확인 프롬프트 스킵
+    -h, --help               이 도움말 출력
+    -V, --version            버전 출력
+
+${C_BOLD}EXAMPLES${C_NC}
+    ${C_DIM}# 기본: 현재 브랜치 삭제 후 develop으로 이동${C_NC}
+    git pr-done
+
+    ${C_DIM}# 타겟 브랜치 지정${C_NC}
+    git pr-done --target master
+    git pr-done -t release/2026-H1
+
+    ${C_DIM}# 특정 브랜치 삭제 (다른 브랜치 체크아웃 상태에서도 가능)${C_NC}
+    git pr-done --branch 'feature-kmg733(SF2RC-2122)'
+
+    ${C_DIM}# 타겟과 삭제 브랜치 모두 지정${C_NC}
+    git pr-done -t develop -b 'feature-abc(SF2RC-1234)'
+
+    ${C_DIM}# 시뮬레이션만 (실제 변경 없음)${C_NC}
+    git pr-done --dry-run
+
+    ${C_DIM}# squash/rebase 머지된 브랜치 강제 정리${C_NC}
+    git pr-done --force
+
+    ${C_DIM}# 확인 프롬프트 없이 즉시 실행${C_NC}
+    git pr-done -y
+
+${C_BOLD}SAFETY${C_NC}
+    • 보호 브랜치는 삭제 거부: ${PROTECTED_BRANCHES[*]}
+    • 보호 프리픽스: ${PROTECTED_PREFIXES[*]}
+    • uncommitted 변경사항 있으면 중단
+    • 타겟 == 삭제 대상이면 중단
+    • ${C_DIM}-d${C_NC} (safe delete) 기본 사용 → 머지 안 된 브랜치는 자동 거부
+    • --force 없이는 실제 머지 확인 후에만 삭제
+
+${C_BOLD}EXIT CODES${C_NC}
+    0   성공
+    1   일반 에러 (git repo 아님, 브랜치 없음 등)
+    2   사전 검증 실패 (dirty tree, 보호 브랜치 등)
+    3   사용자 취소
+    4   git 명령 실행 실패
+
+${C_BOLD}SEE ALSO${C_NC}
+    git-worktree(1), git-branch(1), git-pull(1)
+EOF
+}
+
+# ─────────────────────────────────────────────────────────────
+# 유틸
+# ─────────────────────────────────────────────────────────────
+log_info()    { echo "${C_BLUE}▶${C_NC} $*"; }
+log_ok()      { echo "${C_GREEN}✓${C_NC} $*"; }
+log_warn()    { echo "${C_YELLOW}⚠${C_NC} $*" >&2; }
+log_error()   { echo "${C_RED}✗${C_NC} $*" >&2; }
+log_dry()     { echo "  ${C_DIM}[dry-run] $*${C_NC}"; }
+
+die() {
+    local code="${2:-1}"
+    log_error "$1"
+    exit "$code"
+}
+
+is_protected_branch() {
+    local branch="$1"
+    local p
+    for p in "${PROTECTED_BRANCHES[@]}"; do
+        [[ "$branch" == "$p" ]] && return 0
+    done
+    for p in "${PROTECTED_PREFIXES[@]}"; do
+        [[ "$branch" == "$p"* ]] && return 0
+    done
+    return 1
+}
+
+# 브랜치가 타겟에 머지되었는지 확인 (특수문자 안전 매칭)
+is_merged_into() {
+    local branch="$1" target="$2"
+    git for-each-ref --merged="$target" --format='%(refname:short)' refs/heads/ \
+        | grep -Fxq -- "$branch"
+}
+
+# ─────────────────────────────────────────────────────────────
+# 인자 파싱
+# ─────────────────────────────────────────────────────────────
+TARGET_BRANCH="develop"
+MERGED_BRANCH=""
+DRY_RUN=false
+FORCE=false
+SKIP_CONFIRM=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -t|--target)
+            [[ $# -ge 2 ]] || die "--target requires an argument" 1
+            TARGET_BRANCH="$2"
+            shift 2
+            ;;
+        -b|--branch)
+            [[ $# -ge 2 ]] || die "--branch requires an argument" 1
+            MERGED_BRANCH="$2"
+            shift 2
+            ;;
+        -n|--dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        -f|--force)
+            FORCE=true
+            shift
+            ;;
+        -y|--yes)
+            SKIP_CONFIRM=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -V|--version)
+            echo "${SCRIPT_NAME} ${VERSION}"
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            log_error "Unknown option: $1"
+            echo "  'git pr-done --help' 로 사용법을 확인하세요." >&2
+            exit 1
+            ;;
+        *)
+            log_error "Unexpected argument: $1"
+            echo "  이 스크립트는 플래그 기반입니다. '--help' 참조." >&2
+            exit 1
+            ;;
+    esac
+done
+
+# ─────────────────────────────────────────────────────────────
+# 사전 검증
+# ─────────────────────────────────────────────────────────────
+
+# 1. git 저장소 확인
+git rev-parse --git-dir >/dev/null 2>&1 \
+    || die "현재 디렉토리는 git 저장소가 아닙니다." 1
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+# 2. 현재 브랜치 (detached HEAD 방어)
+if ! CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null); then
+    die "detached HEAD 상태입니다. 먼저 브랜치를 체크아웃하세요." 2
+fi
+
+# MERGED_BRANCH 기본값
+MERGED_BRANCH="${MERGED_BRANCH:-$CURRENT_BRANCH}"
+
+# 3. Dirty tree 검증 (staged + unstaged + untracked 전부 체크)
+if [[ -n "$(git status --porcelain)" ]]; then
+    log_error "커밋되지 않은 변경사항이 있습니다. 먼저 처리하세요."
+    echo "" >&2
+    git status --short >&2
+    echo "" >&2
+    echo "  해결 방법:" >&2
+    echo "    - 커밋: git commit -am 'msg'" >&2
+    echo "    - 스태시: git stash push -u" >&2
+    echo "    - 파기: git restore . && git clean -fd  (주의)" >&2
+    exit 2
+fi
+
+# 4. 타겟 == 삭제 대상 방지
+if [[ "$TARGET_BRANCH" == "$MERGED_BRANCH" ]]; then
+    die "타겟 브랜치와 삭제 브랜치가 동일합니다: '$TARGET_BRANCH'" 2
+fi
+
+# 5. 보호 브랜치 삭제 차단
+if is_protected_branch "$MERGED_BRANCH"; then
+    die "보호 브랜치는 삭제할 수 없습니다: '$MERGED_BRANCH'" 2
+fi
+
+# 6. 타겟 브랜치 로컬 존재 확인
+if ! git show-ref --verify --quiet "refs/heads/$TARGET_BRANCH"; then
+    log_error "타겟 브랜치가 로컬에 존재하지 않습니다: '$TARGET_BRANCH'"
+    echo "  먼저 가져오세요: git fetch origin $TARGET_BRANCH:$TARGET_BRANCH" >&2
+    exit 1
+fi
+
+# 7. 삭제 대상 브랜치 존재 확인
+if ! git show-ref --verify --quiet "refs/heads/$MERGED_BRANCH"; then
+    die "삭제 대상 브랜치가 존재하지 않습니다: '$MERGED_BRANCH'" 1
+fi
+
+# ─────────────────────────────────────────────────────────────
+# 실행 계획 요약
+# ─────────────────────────────────────────────────────────────
+cat <<EOF
+
+${C_BOLD}═══════════════════════════════════════════════${C_NC}
+  ${C_BOLD}PR Done${C_NC} — 로컬 브랜치 정리
+${C_BOLD}═══════════════════════════════════════════════${C_NC}
+  저장소        : ${C_DIM}${REPO_ROOT}${C_NC}
+  현재 브랜치   : ${CURRENT_BRANCH}
+  타겟 브랜치   : ${C_GREEN}${TARGET_BRANCH}${C_NC}
+  삭제 브랜치   : ${C_YELLOW}${MERGED_BRANCH}${C_NC}
+  강제 삭제     : $($FORCE && echo "${C_RED}YES${C_NC}" || echo "no")
+  Dry-run       : $($DRY_RUN && echo "${C_BLUE}YES${C_NC}" || echo "no")
+───────────────────────────────────────────────
+  실행할 명령:
+    1) git remote prune origin
+    2) git checkout ${TARGET_BRANCH}
+    3) git pull --ff-only
+    4) git branch $($FORCE && echo "-D" || echo "-d") '${MERGED_BRANCH}'
+${C_BOLD}═══════════════════════════════════════════════${C_NC}
+
+EOF
+
+# 확인 프롬프트
+if ! $SKIP_CONFIRM && ! $DRY_RUN; then
+    read -r -p "계속 진행할까요? [y/N] " answer
+    case "$answer" in
+        [yY]|[yY][eE][sS]) ;;
+        *)
+            log_warn "취소됨."
+            exit 3
+            ;;
+    esac
+    echo
+fi
+
+# ─────────────────────────────────────────────────────────────
+# 실행
+# ─────────────────────────────────────────────────────────────
+run_cmd() {
+    local title="$1"; shift
+    log_info "$title"
+    if $DRY_RUN; then
+        log_dry "$*"
+    else
+        if ! "$@"; then
+            log_error "실패: $title"
+            exit 4
+        fi
+    fi
+}
+
+# 1/4: prune
+run_cmd "1/4 원격 참조 정리 (git remote prune origin)" \
+    git remote prune origin
+
+# 2/4: checkout (이미 타겟 브랜치면 스킵)
+if [[ "$CURRENT_BRANCH" == "$TARGET_BRANCH" ]]; then
+    log_info "2/4 체크아웃 스킵 (이미 ${TARGET_BRANCH})"
+else
+    run_cmd "2/4 타겟 브랜치로 이동 (git checkout ${TARGET_BRANCH})" \
+        git checkout "$TARGET_BRANCH"
+fi
+
+# 3/4: pull --ff-only
+run_cmd "3/4 최신 동기화 (git pull --ff-only)" \
+    git pull --ff-only
+
+# 4/4: branch delete (머지 검증 포함)
+if $FORCE; then
+    run_cmd "4/4 강제 삭제 (git branch -D '${MERGED_BRANCH}')" \
+        git branch -D "$MERGED_BRANCH"
+else
+    if $DRY_RUN; then
+        log_info "4/4 머지 검증 + 안전 삭제"
+        log_dry "git branch -d '${MERGED_BRANCH}'"
+    elif is_merged_into "$MERGED_BRANCH" "$TARGET_BRANCH"; then
+        run_cmd "4/4 안전 삭제 (git branch -d '${MERGED_BRANCH}')" \
+            git branch -d "$MERGED_BRANCH"
+    else
+        log_error "'${MERGED_BRANCH}'이(가) '${TARGET_BRANCH}'에 머지되지 않은 것으로 보입니다."
+        echo "" >&2
+        echo "  가능한 원인:" >&2
+        echo "    • squash/rebase 머지 (커밋 해시가 달라 탐지 불가)" >&2
+        echo "    • PR이 아직 머지되지 않음" >&2
+        echo "    • 타겟 브랜치가 잘못 지정됨" >&2
+        echo "" >&2
+        echo "  해결:" >&2
+        echo "    • PR 상태 확인 후 --force 로 재실행" >&2
+        echo "    • 또는 다른 타겟 지정: --target <branch>" >&2
+        exit 4
+    fi
+fi
+
+echo
+log_ok "${C_BOLD}완료!${C_NC} '${MERGED_BRANCH}' 정리됨 → 현재 브랜치: ${TARGET_BRANCH}"
