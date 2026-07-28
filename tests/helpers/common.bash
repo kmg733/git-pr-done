@@ -121,6 +121,17 @@ STUB
     chmod +x "$STUB_BIN/gh"
 }
 
+# 머지된 PR 이 있는 gh 스텁.
+# 프로덕션 코드가 --jq 로 "base<공백>headSHA" 한 줄을 받아내는 형태를 흉내낸다.
+stub_gh_merged() {
+    stub_gh "printf '%s %s\n' '$1' '$2'"
+}
+
+# 머지된 MR 이 있는 glab 스텁. glab 은 JSON 배열을 그대로 내보낸다.
+stub_glab_merged() {
+    stub_glab "printf '%s\n' '[{\"target_branch\":\"$1\",\"sha\":\"$2\",\"title\":\"x\"}]'"
+}
+
 # glab 스텁 설치.
 stub_glab() {
     local body="$1"

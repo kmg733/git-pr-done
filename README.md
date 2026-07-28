@@ -65,9 +65,8 @@ moves, so you are still standing where you started.
 
 **Second half — doing, after you confirm.** The four commands in the table above.
 
-> One caveat about step 6: it talks to the server *before* you are asked to confirm. If you
-> answer no at the prompt, nothing of yours is touched, but your local copy of the server's
-> branch list will already have been refreshed.
+> Step 6 only *reads* from the server. Nothing is deleted or rewritten before you confirm, so
+> answering no at the prompt leaves the repository exactly as it was.
 
 ---
 
@@ -345,9 +344,11 @@ logged in, `git-pr-done` asks the server and confirms it for you:
 git pr-done --force
 ```
 
-`--force` only skips the *local history* check. It still requires proof that the branch was
-merged, from either git history or the server. With no proof, it refuses and shows you what
-would be lost:
+`--force` only skips the *local history* check. It still requires proof that **the commit you
+are on right now** was merged. It compares the head commit of the merged pull request with the
+tip of your branch, so an older pull request that happened to use the same branch name, or
+commits you added after the merge, do not count as proof. With no proof, it refuses and shows
+you what would be lost:
 
 ```
 ✗ 머지 증거가 없어 강제 삭제를 거부합니다: 'feat'
@@ -369,7 +370,7 @@ Deleting truly unmerged work is left to you, deliberately.
 | `머지된 타겟 브랜치를 찾지 못했습니다` | It could not work out where your work went | `--target <branch>`, or save one with `git config pr-done.target <branch>` |
 | `타겟 브랜치가 로컬에 존재하지 않습니다` | The target exists on the server but not on your computer | `git fetch origin <branch>:<branch>` |
 | `… 에 머지되지 않았습니다` | Your branch has commits the target does not have | Check the pull request really is merged; if it was squash-merged, see `--force` above |
-| `머지 증거가 없어 강제 삭제를 거부합니다` | Even `--force` could not find proof of a merge | The listed commits exist nowhere else. Delete only if you are sure: `git branch -D <branch>` |
+| `머지 증거가 없어 강제 삭제를 거부합니다` | Even `--force` could not prove that *these* commits were merged | The listed commits exist nowhere else. Delete only if you are sure: `git branch -D <branch>` |
 
 ## Exit Codes
 

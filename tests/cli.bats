@@ -199,6 +199,24 @@ setup_merged_feature() {
     [[ "$output" == *"git checkout develop"* ]]
 }
 
+# 확인 프롬프트에서 취소하면 아무것도 바뀌지 않은 상태로 남는다
+@test "answering no at the prompt leaves the repository untouched" {
+    make_branch "develop"
+    make_branch "feat" "develop"
+    merge_branch "feat" "develop"
+    push_all
+    git checkout --quiet "feat"
+    hide_forge_cli
+    # 서버에서 브랜치를 지워 prune 대상이 생기게 한다
+    git --git-dir="$TEST_TMP/origin.git" branch -D feat
+    BEFORE=$(git for-each-ref --format='%(refname)' refs/remotes/)
+
+    run bash -c "printf 'n\n' | '$GIT_PR_DONE'"
+    [ "$status" -eq 3 ]
+    [ "$(git for-each-ref --format='%(refname)' refs/remotes/)" = "$BEFORE" ]
+    [ "$(git symbolic-ref --short HEAD)" = "feat" ]
+}
+
 # ─────────────────────────────────────────────────────────────
 # 머지 증거 사전 검증 (사용자를 옮기기 전에 멈춘다)
 # ─────────────────────────────────────────────────────────────
@@ -234,17 +252,67 @@ setup_merged_feature() {
 }
 
 # gh 가 머지를 확인해 주면 --force 로 삭제한다 (squash 머지 정리)
-@test "--force deletes when the forge confirms the merge" {
+# 단, PR 이 머지한 커밋이 지금 브랜치 끝과 같아야 한다
+@test "--force deletes when the forge confirms the merge of this very commit" {
     make_branch "feat"
     push_all
     git checkout --quiet "feat"
     use_github_remote
-    stub_gh "printf 'main\n'"
+    stub_gh_merged "main" "$(git rev-parse feat)"
 
     run "$GIT_PR_DONE" -y --force
     [ "$status" -eq 0 ]
     run git show-ref --verify --quiet refs/heads/feat
     [ "$status" -ne 0 ]
+}
+
+# 같은 이름을 재사용한 과거 PR 은 지금 커밋의 증거가 아니다
+@test "--force refuses when the merged PR belongs to a reused branch name" {
+    make_branch "fix-typo"
+    merge_branch "fix-typo" "main"
+    push_all
+    git checkout --quiet "fix-typo"
+    OLD_SHA=$(git rev-parse HEAD)
+    # 같은 브랜치 이름으로 전혀 새로운 작업을 올린다
+    echo "재사용된 이름의 새 작업" > brand-new.txt
+    git add .
+    git commit --quiet -m "새 작업 - 아직 머지 안 됨"
+    use_github_remote
+    stub_gh_merged "main" "$OLD_SHA"     # gh 는 과거 PR 을 알려준다
+
+    run "$GIT_PR_DONE" -y --force
+    [ "$status" -ne 0 ]
+    git show-ref --verify --quiet refs/heads/fix-typo
+}
+
+# PR 머지 이후 새 커밋을 쌓았으면 --force 로도 지우지 않는다
+@test "--force refuses when commits were added after the PR was merged" {
+    make_branch "feat"
+    push_all
+    git checkout --quiet "feat"
+    MERGED_SHA=$(git rev-parse HEAD)
+    echo "머지 이후 추가 작업" >> file.txt
+    git commit --quiet -am "머지 뒤에 추가한 커밋"
+    use_github_remote
+    stub_gh_merged "main" "$MERGED_SHA"
+
+    run "$GIT_PR_DONE" -y --force
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"머지 뒤에 추가한 커밋"* ]]
+    git show-ref --verify --quiet refs/heads/feat
+}
+
+# --force 경로에서도 forge 조회는 한 번만 나간다
+@test "--force queries the forge only once" {
+    make_branch "feat"
+    push_all
+    git checkout --quiet "feat"
+    use_github_remote
+    stub_gh_merged "main" "$(git rev-parse feat)"
+
+    run "$GIT_PR_DONE" -y --force
+    [ "$status" -eq 0 ]
+    [ "$(gh_args | wc -l | tr -d ' ')" -eq 1 ]
 }
 
 # git 이력만으로 머지가 확인되면 --force 도 정상 동작한다

@@ -36,140 +36,212 @@ teardown() {
 # 2단계: gh / glab 으로 실제 머지된 PR·MR 조회
 # ─────────────────────────────────────────────────────────────
 
-# detect_from_forge: GitHub 리모트에서 머지된 PR 의 base 브랜치를 반환한다
-@test "detect_from_forge returns the base branch of a merged GitHub PR" {
+# query_forge: GitHub 리모트에서 머지된 PR 의 base 브랜치를 얻는다
+@test "query_forge reads the base branch of a merged GitHub PR" {
     use_github_remote
-    stub_gh "printf 'develop\n'"
+    stub_gh_merged "develop" "abc1234"
 
-    run detect_from_forge "feature-x"
-    [ "$status" -eq 0 ]
-    [ "$output" = "develop" ]
+    query_forge "feature-x"
+    [ "$FORGE_BASE" = "develop" ]
 }
 
-# detect_from_forge: gh 호출 시 머지된 PR 만 조회한다
-@test "detect_from_forge queries only merged PRs" {
+# query_forge: 머지 시점의 head 커밋도 함께 기록한다 (증거 대조용)
+@test "query_forge records the head commit of the merged PR" {
     use_github_remote
-    stub_gh "printf 'develop\n'"
+    stub_gh_merged "develop" "abc1234"
 
-    detect_from_forge "feature-x"
+    query_forge "feature-x"
+    [ "$FORGE_HEAD_OID" = "abc1234" ]
+}
+
+# query_forge: 같은 브랜치를 두 번 물어도 실제 조회는 한 번만 한다
+@test "query_forge queries the forge only once per branch" {
+    use_github_remote
+    stub_gh_merged "develop" "abc1234"
+
+    query_forge "feature-x"
+    query_forge "feature-x"
+
+    [ "$(gh_args | wc -l | tr -d ' ')" -eq 1 ]
+}
+
+# query_forge: 머지된 PR 만, head SHA 까지 요청한다
+@test "query_forge asks only for merged PRs and includes the head SHA" {
+    use_github_remote
+    stub_gh_merged "develop" "abc1234"
+
+    query_forge "feature-x"
 
     [[ "$(gh_args)" == *"--state merged"* ]]
     [[ "$(gh_args)" == *"--head feature-x"* ]]
+    [[ "$(gh_args)" == *"headRefOid"* ]]
 }
 
-# detect_from_forge: 머지된 PR 이 없으면 실패한다
-@test "detect_from_forge fails when no merged PR exists" {
+# query_forge: 머지된 PR 이 없으면 실패한다
+@test "query_forge fails when no merged PR exists" {
     use_github_remote
     stub_gh "printf '\n'"
 
-    run detect_from_forge "feature-x"
+    run query_forge "feature-x"
     [ "$status" -ne 0 ]
 }
 
-# detect_from_forge: gh 가 null 을 반환하면 실패한다
-@test "detect_from_forge fails when gh returns null" {
+# query_forge: gh 가 null 을 반환하면 실패한다
+@test "query_forge fails when gh returns null" {
     use_github_remote
-    stub_gh "printf 'null\n'"
+    stub_gh "printf 'null null\n'"
 
-    run detect_from_forge "feature-x"
+    run query_forge "feature-x"
     [ "$status" -ne 0 ]
 }
 
-# detect_from_forge: gh 인증 실패 시 실패한다
-@test "detect_from_forge fails when gh is unauthenticated" {
+# query_forge: gh 인증 실패 시 실패한다
+@test "query_forge fails when gh is unauthenticated" {
     use_github_remote
     stub_gh "exit 1"
 
-    run detect_from_forge "feature-x"
+    run query_forge "feature-x"
     [ "$status" -ne 0 ]
 }
 
-# detect_from_forge: GitLab 리모트에서 머지된 MR 의 target_branch 를 반환한다
-@test "detect_from_forge returns the target_branch of a merged GitLab MR" {
+# query_forge: GitLab 리모트에서 target_branch 와 sha 를 얻는다
+@test "query_forge reads target_branch and sha of a merged GitLab MR" {
     use_gitlab_remote
-    stub_glab "printf '%s\n' '[{\"target_branch\":\"develop\",\"title\":\"x\"}]'"
+    stub_glab_merged "develop" "def5678"
 
-    run detect_from_forge "feature-x"
-    [ "$status" -eq 0 ]
-    [ "$output" = "develop" ]
+    query_forge "feature-x"
+    [ "$FORGE_BASE" = "develop" ]
+    [ "$FORGE_HEAD_OID" = "def5678" ]
 }
 
-# detect_from_forge: glab 호출 시 머지된 MR 만 조회한다
-@test "detect_from_forge queries only merged MRs" {
+# query_forge: glab 호출 시 머지된 MR 만 조회한다
+@test "query_forge asks only for merged MRs" {
     use_gitlab_remote
-    stub_glab "printf '%s\n' '[{\"target_branch\":\"develop\"}]'"
+    stub_glab_merged "develop" "def5678"
 
-    detect_from_forge "feature-x"
+    query_forge "feature-x"
 
     [[ "$(glab_args)" == *"--merged"* ]]
     [[ "$(glab_args)" == *"--source-branch feature-x"* ]]
 }
 
-# detect_from_forge: 빈 MR 목록이면 실패한다
-@test "detect_from_forge fails on an empty MR list" {
+# query_forge: 빈 MR 목록이면 실패한다
+@test "query_forge fails on an empty MR list" {
     use_gitlab_remote
     stub_glab "printf '%s\n' '[]'"
 
-    run detect_from_forge "feature-x"
+    run query_forge "feature-x"
     [ "$status" -ne 0 ]
 }
 
-# detect_from_forge: GitHub/GitLab 이 아닌 리모트면 실패한다
-@test "detect_from_forge fails on a non GitHub or GitLab remote" {
-    stub_gh "printf 'develop\n'"
+# query_forge: GitHub/GitLab 이 아닌 리모트면 실패한다
+@test "query_forge fails on a non GitHub or GitLab remote" {
+    stub_gh_merged "develop" "abc1234"
 
-    run detect_from_forge "feature-x"
+    run query_forge "feature-x"
     [ "$status" -ne 0 ]
 }
 
-# detect_from_forge: gh 가 설치되어 있지 않으면 실행을 시도하지 않고 실패한다
-@test "detect_from_forge fails when gh is not installed at all" {
+# query_forge: gh 가 설치되어 있지 않으면 실행을 시도하지 않고 실패한다
+@test "query_forge fails when gh is not installed at all" {
     use_github_remote
     remove_forge_cli || skip "축소한 PATH 에도 gh/glab 이 존재하는 환경"
 
-    run detect_from_forge "feature-x"
+    run query_forge "feature-x"
     [ "$status" -ne 0 ]
 }
 
-# detect_from_forge: glab 이 설치되어 있지 않으면 실행을 시도하지 않고 실패한다
-@test "detect_from_forge fails when glab is not installed at all" {
+# query_forge: glab 이 설치되어 있지 않으면 실행을 시도하지 않고 실패한다
+@test "query_forge fails when glab is not installed at all" {
     use_gitlab_remote
     remove_forge_cli || skip "축소한 PATH 에도 gh/glab 이 존재하는 환경"
 
-    run detect_from_forge "feature-x"
+    run query_forge "feature-x"
     [ "$status" -ne 0 ]
 }
 
 # ─────────────────────────────────────────────────────────────
-# glab JSON 파싱 (jq 경로 / sed 폴백 경로)
+# glab JSON 파싱 (jq 경로 / sed 폴백 경로) — target_branch + sha
 # ─────────────────────────────────────────────────────────────
 
-@test "extract_target_branch_jq reads the first target_branch" {
-    run extract_target_branch_jq '[{"target_branch":"develop","title":"x"}]'
+@test "parse_mr_json_jq reads the first target_branch and sha" {
+    run parse_mr_json_jq '[{"target_branch":"develop","sha":"abc123","title":"x"}]'
     [ "$status" -eq 0 ]
-    [ "$output" = "develop" ]
+    [ "$output" = "develop abc123" ]
 }
 
-@test "extract_target_branch_jq fails on an empty list" {
-    run extract_target_branch_jq '[]'
+@test "parse_mr_json_jq fails on an empty list" {
+    run parse_mr_json_jq '[]'
     [ "$status" -ne 0 ]
 }
 
-# jq 가 없는 환경에서 쓰이는 폴백. 항목이 여럿이어도 첫 번째를 골라야 한다.
-@test "extract_target_branch_sed reads the first target_branch" {
-    run extract_target_branch_sed '[{"target_branch":"develop","title":"x"}]'
+@test "parse_mr_json_sed reads the first target_branch and sha" {
+    run parse_mr_json_sed '[{"target_branch":"develop","sha":"abc123","title":"x"}]'
     [ "$status" -eq 0 ]
-    [ "$output" = "develop" ]
+    [ "$output" = "develop abc123" ]
 }
 
-@test "extract_target_branch_sed picks the first entry when several are returned" {
-    run extract_target_branch_sed '[{"target_branch":"develop"},{"target_branch":"main"}]'
+@test "parse_mr_json_sed picks the first entry when several are returned" {
+    run parse_mr_json_sed '[{"target_branch":"develop","sha":"aaa"},{"target_branch":"main","sha":"bbb"}]'
     [ "$status" -eq 0 ]
-    [ "$output" = "develop" ]
+    [ "$output" = "develop aaa" ]
 }
 
-@test "extract_target_branch_sed fails on an empty list" {
-    run extract_target_branch_sed '[]'
+@test "parse_mr_json_sed fails on an empty list" {
+    run parse_mr_json_sed '[]'
+    [ "$status" -ne 0 ]
+}
+
+# ─────────────────────────────────────────────────────────────
+# 머지 증거: PR head 커밋과 현재 브랜치 끝의 대조
+# ─────────────────────────────────────────────────────────────
+
+# 브랜치 끝이 PR head 와 같으면 증거로 인정한다
+@test "forge_head_matches accepts an exact head match" {
+    make_branch "feature-x"
+    FORGE_HEAD_OID=$(git rev-parse "feature-x")
+
+    run forge_head_matches "feature-x"
+    [ "$status" -eq 0 ]
+}
+
+# 브랜치 끝이 PR head 의 조상이면 인정한다 (내 커밋은 전부 머지된 상태)
+@test "forge_head_matches accepts when the branch tip is an ancestor" {
+    make_branch "feature-x"
+    make_branch "feature-x-ahead" "feature-x"
+    FORGE_HEAD_OID=$(git rev-parse "feature-x-ahead")
+
+    run forge_head_matches "feature-x"
+    [ "$status" -eq 0 ]
+}
+
+# PR 머지 이후 새 커밋을 쌓았으면 증거가 아니다
+@test "forge_head_matches rejects commits added after the merge" {
+    make_branch "feature-x"
+    FORGE_HEAD_OID=$(git rev-parse "feature-x")
+    git checkout --quiet "feature-x"
+    echo "머지 이후 새 작업" >> file.txt
+    git commit --quiet -am "머지 뒤에 추가한 커밋"
+
+    run forge_head_matches "feature-x"
+    [ "$status" -ne 0 ]
+}
+
+# 이름만 같은 과거 PR (전혀 다른 커밋) 은 증거가 아니다
+@test "forge_head_matches rejects an unrelated commit from a reused branch name" {
+    make_branch "feature-x"
+    FORGE_HEAD_OID="0000000000000000000000000000000000000000"
+
+    run forge_head_matches "feature-x"
+    [ "$status" -ne 0 ]
+}
+
+# SHA 를 얻지 못했으면 증거로 인정하지 않는다 (fail-closed)
+@test "forge_head_matches rejects when no head SHA was obtained" {
+    make_branch "feature-x"
+    FORGE_HEAD_OID=""
+
+    run forge_head_matches "feature-x"
     [ "$status" -ne 0 ]
 }
 

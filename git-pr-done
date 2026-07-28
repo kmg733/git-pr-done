@@ -41,7 +41,8 @@ ${C_BOLD}USAGE${C_NC}
 
 ${C_BOLD}DESCRIPTION${C_NC}
     PR/MR이 원격에서 머지된 후 로컬을 깔끔하게 정리합니다.
-    아래 4단계를 안전장치와 함께 순차 실행합니다.
+    검증을 모두 통과하고 사용자가 확인하면 아래 4단계를 실행합니다.
+    (검증 단계에서 git fetch 로 원격 정보를 읽지만, 확인 전에는 아무것도 바꾸지 않습니다)
 
       1) git remote prune origin           # 원격에서 삭제된 참조 정리
       2) git checkout <TARGET>             # 타겟 브랜치로 이동
@@ -55,7 +56,7 @@ ${C_BOLD}TARGET DETECTION${C_NC}
       1) ${C_GREEN}git config pr-done.target${C_NC}   저장소에 고정해 둔 값
       2) ${C_GREEN}gh${C_NC} / ${C_GREEN}glab${C_NC}                   머지된 PR·MR 의 base 브랜치 (가장 정확)
       3) ${C_GREEN}git branch -r --contains${C_NC}    git 이력만으로 추론
-      4) ${C_GREEN}origin/HEAD${C_NC}                 리모트 기본 브랜치
+      4) ${C_GREEN}origin/HEAD${C_NC}                 리모트 기본 브랜치 (머지 흔적이 있을 때만)
 
     ${C_YELLOW}전부 실패하면 임의의 브랜치로 이동하지 않고 중단합니다.${C_NC}
     이 경우 ${C_DIM}--target${C_NC} 을 쓰거나 아래처럼 저장소에 고정하세요.
@@ -70,8 +71,9 @@ ${C_BOLD}OPTIONS${C_NC}
     -n, --dry-run            실제 실행 없이 명령어만 출력
                              (원격 참조 갱신은 수행 — 감지 결과를 정확히 미리 보기 위해)
     -f, --force              git 이력에 흔적이 없어도 삭제 (-D 사용)
-                             ${C_YELLOW}머지 증거가 있을 때만 동작합니다.${C_NC} squash/rebase 머지는
-                             gh/glab 조회로 확인되며, 증거가 없으면 거부합니다.
+                             ${C_YELLOW}지금 이 커밋이 머지됐다는 증거가 있을 때만 동작합니다.${C_NC}
+                             gh/glab 이 알려준 PR head 커밋과 브랜치 끝을 대조하므로,
+                             같은 이름의 과거 PR 이나 머지 후 추가한 커밋은 통과하지 못합니다.
     -y, --yes                확인 프롬프트 스킵
     -h, --help               이 도움말 출력
     -V, --version            버전 출력
@@ -96,7 +98,7 @@ ${C_BOLD}EXAMPLES${C_NC}
     ${C_DIM}# 시뮬레이션만 (실제 변경 없음)${C_NC}
     git pr-done --dry-run
 
-    ${C_DIM}# squash/rebase 머지된 브랜치 강제 정리${C_NC}
+    ${C_DIM}# squash/rebase 머지된 브랜치 정리 (gh/glab 이 머지를 확인해 줍니다)${C_NC}
     git pr-done --force
 
     ${C_DIM}# 확인 프롬프트 없이 즉시 실행${C_NC}
@@ -109,15 +111,16 @@ ${C_BOLD}SAFETY${C_NC}
     • 타겟 == 삭제 대상이면 중단
     • ${C_DIM}-d${C_NC} (safe delete) 기본 사용 → 머지 안 된 브랜치는 자동 거부
     • 머지 여부는 ${C_BOLD}브랜치를 이동하기 전에${C_NC} 확인 → 실패해도 원래 자리에 남습니다
-    • --force 도 머지 증거 없이는 삭제하지 않음
+    • --force 도 머지 증거 없이는 삭제하지 않음 (커밋 단위로 대조)
       증거가 없으면 잃게 될 커밋을 보여주고 수동 명령을 안내합니다
+    • 확인 프롬프트 이전에는 아무것도 바꾸지 않음 (원격 정보를 읽기만 함)
 
 ${C_BOLD}EXIT CODES${C_NC}
     0   성공
     1   일반 에러 (git repo 아님, 브랜치 없음 등)
     2   사전 검증 실패 (dirty tree, 보호 브랜치, 타겟 감지 실패 등)
     3   사용자 취소
-    4   git 명령 실행 실패
+    4   git 명령 실행 실패, 또는 머지 증거가 없어 삭제를 거부함
 
 ${C_BOLD}SEE ALSO${C_NC}
     git-worktree(1), git-branch(1), git-pull(1)
@@ -173,15 +176,16 @@ merge_check_ref() {
 # 이 브랜치가 실제로 어딘가에 머지됐다는 증거를 찾는다.
 # 성공 시 FORCE_EVIDENCE 에 근거를 적는다.
 find_merge_evidence() {
-    local branch="$1" target="$2" base
+    local branch="$1" target="$2"
     if is_merged_into "$branch" "$(merge_check_ref "$target")"; then
         FORCE_EVIDENCE="git 이력에서 '${target}' 에 머지됨 확인"
         return 0
     fi
     # squash/rebase 머지는 커밋 해시가 달라 git 이력에 흔적이 없다.
-    # 이때는 PR/MR 조회만이 유일한 증거다.
-    if base=$(detect_from_forge "$branch"); then
-        FORCE_EVIDENCE="PR/MR 이 '${base}' 에 머지됨 (gh/glab 확인)"
+    # 이때는 PR/MR 조회만이 유일한 증거이며, 그 PR 이 머지한 커밋이
+    # 지금 이 브랜치의 커밋과 같아야 한다.
+    if query_forge "$branch" && forge_head_matches "$branch"; then
+        FORCE_EVIDENCE="PR/MR 이 '${FORGE_BASE}' 에 머지됨 (커밋 ${FORGE_HEAD_OID} 일치)"
         return 0
     fi
     return 1
@@ -243,10 +247,11 @@ forge_kind() {
     esac
 }
 
-# glab JSON 응답에서 첫 번째 target_branch 추출
-extract_target_branch_jq() {
+# glab JSON 응답에서 첫 항목의 "target_branch sha" 추출
+parse_mr_json_jq() {
     local value
-    value=$(printf '%s' "$1" | jq -r '.[0].target_branch // empty' 2>/dev/null) || return 1
+    value=$(printf '%s' "$1" \
+        | jq -r '.[0] // empty | "\(.target_branch) \(.sha)"' 2>/dev/null) || return 1
     [[ -n "$value" ]] || return 1
     printf '%s\n' "$value"
 }
@@ -254,50 +259,98 @@ extract_target_branch_jq() {
 # jq 가 없는 환경용 폴백.
 # sed 의 .* 는 탐욕적이라 한 줄에 항목이 여럿이면 마지막 것을 집는다.
 # grep -o 로 먼저 잘라낸 뒤 첫 번째만 쓴다.
-extract_target_branch_sed() {
-    local value
-    value=$(printf '%s' "$1" \
-        | grep -o '"target_branch"[[:space:]]*:[[:space:]]*"[^"]*"' \
-        | head -1 \
-        | sed 's/.*:[[:space:]]*"\([^"]*\)"$/\1/' || true)
-    [[ -n "$value" ]] || return 1
-    printf '%s\n' "$value"
+parse_mr_json_sed() {
+    local json="$1" base sha
+    base=$(json_first_string "$json" "target_branch")
+    sha=$(json_first_string "$json" "sha")
+    [[ -n "$base" ]] || return 1
+    printf '%s %s\n' "$base" "$sha"
 }
 
-extract_target_branch() {
+# JSON 문자열에서 지정 키의 첫 번째 값을 꺼낸다 (폴백 전용, 중첩은 다루지 않음)
+json_first_string() {
+    printf '%s' "$1" \
+        | grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
+        | head -1 \
+        | sed 's/.*:[[:space:]]*"\([^"]*\)"$/\1/' || true
+}
+
+parse_mr_json() {
     if command -v jq >/dev/null 2>&1; then
-        extract_target_branch_jq "$1"
+        parse_mr_json_jq "$1"
     else
-        extract_target_branch_sed "$1"
+        parse_mr_json_sed "$1"
     fi
 }
 
-# 2단계: 실제로 머지된 PR/MR 을 조회해 base 브랜치를 얻는다.
+# 2단계: 실제로 머지된 PR/MR 을 조회한다.
 # squash/rebase 머지도 정확히 잡히는 유일한 경로다.
-detect_from_forge() {
-    local branch="$1" kind base json
+#
+# 결과를 FORGE_BASE / FORGE_HEAD_OID 전역에 담는다. 반환값으로 넘기지 않는 이유는
+# 두 가지 질문("어디로 머지됐나" / "이 커밋이 머지됐나")에 같은 조회로 답해야 하기
+# 때문이다. 따라서 호출부는 반드시 $(...) 없이 직접 호출해야 한다.
+# 서브셸 안에서 부르면 전역이 조용히 사라진다.
+query_forge() {
+    local branch="$1" kind out json
+
+    # 같은 브랜치면 재조회하지 않는다
+    if [[ "$FORGE_QUERIED_BRANCH" == "$branch" ]]; then
+        return $FORGE_RESULT
+    fi
+    FORGE_QUERIED_BRANCH="$branch"
+    FORGE_RESULT=1
+    FORGE_BASE=""
+    FORGE_HEAD_OID=""
+
     kind=$(forge_kind) || return 1
 
     case "$kind" in
         github)
             command -v gh >/dev/null 2>&1 || return 1
-            base=$(gh pr list --head "$branch" --state merged \
-                       --json baseRefName,mergedAt --limit 1 \
-                       --jq '.[0].baseRefName' 2>/dev/null) || return 1
+            out=$(gh pr list --head "$branch" --state merged \
+                      --json baseRefName,mergedAt,headRefOid --limit 1 \
+                      --jq '.[0] // empty | "\(.baseRefName) \(.headRefOid)"' 2>/dev/null) || return 1
             ;;
         gitlab)
             command -v glab >/dev/null 2>&1 || return 1
             json=$(glab mr list --source-branch "$branch" --merged \
                        --order merged_at --per-page 1 --output json 2>/dev/null) || return 1
-            base=$(extract_target_branch "$json") || return 1
+            out=$(parse_mr_json "$json") || return 1
             ;;
         *)
             return 1
             ;;
     esac
 
-    [[ -n "$base" && "$base" != "null" ]] || return 1
-    printf '%s\n' "$base"
+    read -r FORGE_BASE FORGE_HEAD_OID <<< "$out"
+    [[ "$FORGE_HEAD_OID" == "null" ]] && FORGE_HEAD_OID=""
+    if [[ -z "$FORGE_BASE" || "$FORGE_BASE" == "null" ]]; then
+        FORGE_BASE=""
+        FORGE_HEAD_OID=""
+        return 1
+    fi
+
+    FORGE_RESULT=0
+    return 0
+}
+
+# PR/MR 이 머지한 커밋이 지금 이 브랜치의 커밋과 같은지 확인한다.
+#
+# 이름만으로 조회하면 같은 이름을 재사용한 과거 PR 이 잡히거나,
+# 머지 후 새로 쌓은 커밋까지 머지된 것으로 오인된다. 커밋으로 대조해야 한다.
+forge_head_matches() {
+    local branch="$1" tip
+    [[ -n "$FORGE_HEAD_OID" ]] || return 1
+    tip=$(git rev-parse --verify "refs/heads/$branch" 2>/dev/null) || return 1
+
+    [[ "$FORGE_HEAD_OID" == "$tip" ]] && return 0
+
+    # 내 브랜치 끝이 PR head 의 조상이면 내 커밋은 전부 머지된 것이다.
+    # (그 커밋 객체를 로컬에 갖고 있을 때만 판정할 수 있다)
+    if git cat-file -e "${FORGE_HEAD_OID}^{commit}" 2>/dev/null; then
+        git merge-base --is-ancestor "$tip" "$FORGE_HEAD_OID" && return 0
+    fi
+    return 1
 }
 
 # 3단계: 이 브랜치를 포함하는 원격 브랜치로 추론한다.
@@ -362,8 +415,9 @@ resolve_target_branch() {
         TARGET_SOURCE="git config pr-done.target"
         return 0
     fi
-    if value=$(detect_from_forge "$branch"); then
-        TARGET_BRANCH="$value"
+    # $( ) 로 감싸지 않는다 — 서브셸이면 query_forge 가 채운 전역이 사라진다
+    if query_forge "$branch"; then
+        TARGET_BRANCH="$FORGE_BASE"
         TARGET_SOURCE="자동 감지: 머지된 PR/MR 의 base 브랜치"
         return 0
     fi
@@ -388,6 +442,12 @@ TARGET_SOURCE=""
 MERGED_BRANCH=""
 FORCE_EVIDENCE=""
 FETCH_OK=true
+
+# forge 조회 결과 (query_forge 가 채운다. 브랜치당 1회만 조회)
+FORGE_QUERIED_BRANCH=""
+FORGE_RESULT=1
+FORGE_BASE=""
+FORGE_HEAD_OID=""
 DRY_RUN=false
 FORCE=false
 SKIP_CONFIRM=false
@@ -499,9 +559,14 @@ fi
 # 6. 원격 참조 갱신
 #    타겟 감지(3단계 이력 추론)와 머지 증거 검증이 모두 원격 참조를 읽으므로,
 #    낡은 참조로 잘못 판정하지 않도록 먼저 갱신한다.
+#
+#    여기서는 --prune 을 쓰지 않는다. 필요한 것은 "새 정보를 읽어오는 것"이지
+#    "낡은 것을 지우는 것"이 아니며, 지우는 동작은 사용자 확인 뒤(실행 1단계)에
+#    해야 한다. 프롬프트에서 취소했는데 참조가 이미 사라져 있으면 안 된다.
+#
 #    오프라인이면 실패해도 진행하되, 그 사실을 기억해 두고 사전 검증을 건너뛴다.
 FETCH_OK=true
-if ! git fetch --prune --quiet origin 2>/dev/null; then
+if ! git fetch --quiet origin 2>/dev/null; then
     FETCH_OK=false
     log_warn "원격 참조를 갱신하지 못했습니다. 로컬 정보만으로 진행합니다."
 fi
@@ -581,6 +646,7 @@ ${C_BOLD}═══════════════════════�
   강제 삭제     : $($FORCE && echo "${C_RED}YES${C_NC}" || echo "no")
   Dry-run       : $($DRY_RUN && echo "${C_BLUE}YES${C_NC}" || echo "no")
 ───────────────────────────────────────────────
+  이미 수행       : ${C_DIM}git fetch origin${C_NC} (타겟 판정을 위해 선행)
   실행할 명령:
     1) git remote prune origin
     2) git checkout ${TARGET_BRANCH}
