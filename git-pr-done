@@ -11,7 +11,7 @@ set -euo pipefail
 # 상수
 # ─────────────────────────────────────────────────────────────
 readonly SCRIPT_NAME="git-pr-done"
-readonly VERSION="1.0.0"
+readonly VERSION="2.0.0"
 readonly PROTECTED_BRANCHES=(master main develop production staging)
 readonly PROTECTED_PREFIXES=(release/ hotfix/)
 
@@ -48,24 +48,44 @@ ${C_BOLD}DESCRIPTION${C_NC}
       3) git pull --ff-only                # 최신 커밋 동기화
       4) git branch -d <MERGED>            # 머지된 로컬 브랜치 삭제
 
+${C_BOLD}TARGET DETECTION${C_NC}
+    ${C_DIM}-t${C_NC} 를 생략하면 삭제 대상 브랜치가 ${C_BOLD}실제로 머지된 브랜치${C_NC}를 자동 감지합니다.
+    아래 순서로 확인하고, 먼저 찾아지는 값을 씁니다.
+
+      1) ${C_GREEN}git config pr-done.target${C_NC}   저장소에 고정해 둔 값
+      2) ${C_GREEN}gh${C_NC} / ${C_GREEN}glab${C_NC}                   머지된 PR·MR 의 base 브랜치 (가장 정확)
+      3) ${C_GREEN}git branch -r --contains${C_NC}    git 이력만으로 추론
+      4) ${C_GREEN}origin/HEAD${C_NC}                 리모트 기본 브랜치
+
+    ${C_YELLOW}전부 실패하면 임의의 브랜치로 이동하지 않고 중단합니다.${C_NC}
+    이 경우 ${C_DIM}--target${C_NC} 을 쓰거나 아래처럼 저장소에 고정하세요.
+
+      git config pr-done.target develop
+
 ${C_BOLD}OPTIONS${C_NC}
-    -t, --target <BRANCH>    이동/동기화할 타겟 브랜치 (기본: ${C_GREEN}develop${C_NC})
+    -t, --target <BRANCH>    이동/동기화할 타겟 브랜치
+                             (생략 시 위 TARGET DETECTION 순서로 자동 감지)
     -b, --branch <BRANCH>    삭제할 머지 완료 브랜치
                              (기본: 스크립트 실행 시점의 현재 브랜치)
     -n, --dry-run            실제 실행 없이 명령어만 출력
-    -f, --force              머지 검증 실패 시에도 강제 삭제 (-D 사용)
-                             squash/rebase 머지된 브랜치 정리에 유용
+                             (원격 참조 갱신은 수행 — 감지 결과를 정확히 미리 보기 위해)
+    -f, --force              git 이력에 흔적이 없어도 삭제 (-D 사용)
+                             ${C_YELLOW}머지 증거가 있을 때만 동작합니다.${C_NC} squash/rebase 머지는
+                             gh/glab 조회로 확인되며, 증거가 없으면 거부합니다.
     -y, --yes                확인 프롬프트 스킵
     -h, --help               이 도움말 출력
     -V, --version            버전 출력
 
 ${C_BOLD}EXAMPLES${C_NC}
-    ${C_DIM}# 기본: 현재 브랜치 삭제 후 develop으로 이동${C_NC}
+    ${C_DIM}# 기본: 머지 대상 브랜치를 감지해 이동하고 현재 브랜치 삭제${C_NC}
     git pr-done
 
-    ${C_DIM}# 타겟 브랜치 지정${C_NC}
+    ${C_DIM}# 타겟 브랜치 직접 지정 (감지 생략)${C_NC}
     git pr-done --target master
     git pr-done -t release/2026-H1
+
+    ${C_DIM}# 이 저장소의 타겟을 고정 (매번 -t 를 치기 싫을 때)${C_NC}
+    git config pr-done.target develop
 
     ${C_DIM}# 특정 브랜치 삭제 (다른 브랜치 체크아웃 상태에서도 가능)${C_NC}
     git pr-done --branch 'feature-kmg733(SF2RC-2122)'
@@ -88,12 +108,14 @@ ${C_BOLD}SAFETY${C_NC}
     • uncommitted 변경사항 있으면 중단
     • 타겟 == 삭제 대상이면 중단
     • ${C_DIM}-d${C_NC} (safe delete) 기본 사용 → 머지 안 된 브랜치는 자동 거부
-    • --force 없이는 실제 머지 확인 후에만 삭제
+    • 머지 여부는 ${C_BOLD}브랜치를 이동하기 전에${C_NC} 확인 → 실패해도 원래 자리에 남습니다
+    • --force 도 머지 증거 없이는 삭제하지 않음
+      증거가 없으면 잃게 될 커밋을 보여주고 수동 명령을 안내합니다
 
 ${C_BOLD}EXIT CODES${C_NC}
     0   성공
     1   일반 에러 (git repo 아님, 브랜치 없음 등)
-    2   사전 검증 실패 (dirty tree, 보호 브랜치 등)
+    2   사전 검증 실패 (dirty tree, 보호 브랜치, 타겟 감지 실패 등)
     3   사용자 취소
     4   git 명령 실행 실패
 
@@ -136,24 +158,260 @@ is_merged_into() {
         | grep -Fxq -- "$branch"
 }
 
+# 머지 여부를 확인할 기준 ref 를 고른다.
+# 로컬 타겟 브랜치는 아직 pull 하기 전이라 낡았을 수 있으므로,
+# 방금 fetch 한 origin/<타겟> 이 있으면 그쪽이 정확하다.
+merge_check_ref() {
+    local target="$1"
+    if git show-ref --verify --quiet "refs/remotes/origin/$target"; then
+        printf 'origin/%s\n' "$target"
+    else
+        printf '%s\n' "$target"
+    fi
+}
+
+# 이 브랜치가 실제로 어딘가에 머지됐다는 증거를 찾는다.
+# 성공 시 FORCE_EVIDENCE 에 근거를 적는다.
+find_merge_evidence() {
+    local branch="$1" target="$2" base
+    if is_merged_into "$branch" "$(merge_check_ref "$target")"; then
+        FORCE_EVIDENCE="git 이력에서 '${target}' 에 머지됨 확인"
+        return 0
+    fi
+    # squash/rebase 머지는 커밋 해시가 달라 git 이력에 흔적이 없다.
+    # 이때는 PR/MR 조회만이 유일한 증거다.
+    if base=$(detect_from_forge "$branch"); then
+        FORCE_EVIDENCE="PR/MR 이 '${base}' 에 머지됨 (gh/glab 확인)"
+        return 0
+    fi
+    return 1
+}
+
+# 타겟에 반영되지 않은 커밋을 보여주고, 수동 삭제 방법을 안내한다.
+report_unmerged_commits() {
+    local branch="$1" target="$2" ref count
+    ref=$(merge_check_ref "$target")
+    count=$(git rev-list --count "${ref}..${branch}" 2>/dev/null || echo 0)
+
+    echo "" >&2
+    if [[ "$count" -gt 0 ]]; then
+        echo "  '${target}' 에 없는 커밋 ${count}개:" >&2
+        git log --oneline --max-count=10 "${ref}..${branch}" 2>/dev/null \
+            | sed 's/^/    /' >&2
+        if [[ "$count" -gt 10 ]]; then
+            echo "    ... 외 $((count - 10))개" >&2
+        fi
+        echo "" >&2
+    fi
+    echo "  가능한 원인:" >&2
+    echo "    • PR 이 아직 머지되지 않음" >&2
+    echo "    • squash/rebase 머지 → gh/glab 을 설치·로그인하면 자동 확인됩니다" >&2
+    echo "    • 타겟 브랜치가 잘못 지정됨 (--target 으로 지정)" >&2
+    echo "" >&2
+    echo "  위 커밋을 잃어도 괜찮다고 판단되면 직접 실행하세요:" >&2
+    echo "    git branch -D '${branch}'" >&2
+}
+
 # ─────────────────────────────────────────────────────────────
-# 인자 파싱
+# 타겟 브랜치 자동 감지
+#
+# --target 이 없을 때, "이 브랜치가 실제로 어디에 머지됐는가"를
+# 아래 순서로 알아낸다. 먼저 성공한 단계에서 확정한다.
+#
+#   1) git config pr-done.target   저장소별 고정값
+#   2) gh / glab                   머지된 PR·MR 의 base 브랜치 (가장 정확)
+#   3) git branch -r --contains    git 이력만으로 추론
+#   4) origin/HEAD                 리모트 기본 브랜치
 # ─────────────────────────────────────────────────────────────
-TARGET_BRANCH="develop"
+
+# 1단계: 저장소에 고정 설정된 타겟
+detect_from_config() {
+    local value
+    value=$(git config --get pr-done.target 2>/dev/null) || return 1
+    [[ -n "$value" ]] || return 1
+    printf '%s\n' "$value"
+}
+
+# origin 리모트가 어느 호스팅인지 판별
+forge_kind() {
+    local url
+    url=$(git remote get-url origin 2>/dev/null) || return 1
+    case "$url" in
+        *github.com*|*github.*) printf 'github\n' ;;
+        *gitlab*)               printf 'gitlab\n' ;;
+        *)                      return 1 ;;
+    esac
+}
+
+# glab JSON 응답에서 첫 번째 target_branch 추출
+extract_target_branch_jq() {
+    local value
+    value=$(printf '%s' "$1" | jq -r '.[0].target_branch // empty' 2>/dev/null) || return 1
+    [[ -n "$value" ]] || return 1
+    printf '%s\n' "$value"
+}
+
+# jq 가 없는 환경용 폴백.
+# sed 의 .* 는 탐욕적이라 한 줄에 항목이 여럿이면 마지막 것을 집는다.
+# grep -o 로 먼저 잘라낸 뒤 첫 번째만 쓴다.
+extract_target_branch_sed() {
+    local value
+    value=$(printf '%s' "$1" \
+        | grep -o '"target_branch"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        | head -1 \
+        | sed 's/.*:[[:space:]]*"\([^"]*\)"$/\1/' || true)
+    [[ -n "$value" ]] || return 1
+    printf '%s\n' "$value"
+}
+
+extract_target_branch() {
+    if command -v jq >/dev/null 2>&1; then
+        extract_target_branch_jq "$1"
+    else
+        extract_target_branch_sed "$1"
+    fi
+}
+
+# 2단계: 실제로 머지된 PR/MR 을 조회해 base 브랜치를 얻는다.
+# squash/rebase 머지도 정확히 잡히는 유일한 경로다.
+detect_from_forge() {
+    local branch="$1" kind base json
+    kind=$(forge_kind) || return 1
+
+    case "$kind" in
+        github)
+            command -v gh >/dev/null 2>&1 || return 1
+            base=$(gh pr list --head "$branch" --state merged \
+                       --json baseRefName,mergedAt --limit 1 \
+                       --jq '.[0].baseRefName' 2>/dev/null) || return 1
+            ;;
+        gitlab)
+            command -v glab >/dev/null 2>&1 || return 1
+            json=$(glab mr list --source-branch "$branch" --merged \
+                       --order merged_at --per-page 1 --output json 2>/dev/null) || return 1
+            base=$(extract_target_branch "$json") || return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    [[ -n "$base" && "$base" != "null" ]] || return 1
+    printf '%s\n' "$base"
+}
+
+# 3단계: 이 브랜치를 포함하는 원격 브랜치로 추론한다.
+# develop 과 main 이 모두 잡히는 경우처럼 후보가 여럿이면
+# 다른 후보를 이미 포함한 브랜치(더 나중 단계)를 걸러내고 가장 앞선 것만 남긴다.
+detect_from_contains() {
+    local branch="$1"
+    local ref short cand other candidates="" keep="" dominated count
+
+    while IFS= read -r ref; do
+        [[ "$ref" == origin/* ]] || continue
+        short="${ref#origin/}"
+        [[ "$short" == "HEAD" ]] && continue
+        [[ "$short" == "$branch" ]] && continue
+        git show-ref --verify --quiet "refs/heads/$short" || continue
+        candidates="${candidates}${short}"$'\n'
+    done < <(git branch -r --contains "refs/heads/$branch" \
+                 --format='%(refname:short)' 2>/dev/null)
+
+    [[ -n "$candidates" ]] || return 1
+
+    while IFS= read -r cand; do
+        [[ -n "$cand" ]] || continue
+        dominated=false
+        while IFS= read -r other; do
+            [[ -n "$other" ]] || continue
+            [[ "$other" == "$cand" ]] && continue
+            if git merge-base --is-ancestor \
+                   "refs/heads/$other" "refs/heads/$cand" 2>/dev/null; then
+                dominated=true
+                break
+            fi
+        done <<< "$candidates"
+        $dominated || keep="${keep}${cand}"$'\n'
+    done <<< "$candidates"
+
+    count=$(printf '%s' "$keep" | grep -c . || true)
+    [[ "$count" -eq 1 ]] || return 1
+    printf '%s' "$keep" | grep . | head -1
+}
+
+# 4단계: 리모트가 알려주는 기본 브랜치
+#
+# 주의: origin/HEAD 는 "저장소의 기본 브랜치"이지 "이 브랜치가 머지된 곳"이 아니다.
+# 1~3단계와 달리 질문에 직접 답하지 않으므로, 머지 흔적이 확인될 때만 채택한다.
+# 근거 없이 채택하면 사용자를 엉뚱한 브랜치로 이동시킨다.
+detect_from_remote_head() {
+    local branch="$1" ref
+    ref=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null) || return 1
+    ref="${ref#origin/}"
+    [[ -n "$ref" ]] || return 1
+    is_merged_into "$branch" "$(merge_check_ref "$ref")" || return 1
+    printf '%s\n' "$ref"
+}
+
+# 감지 체인 실행. 성공 시 TARGET_BRANCH / TARGET_SOURCE 를 채운다.
+resolve_target_branch() {
+    local branch="$1" value
+
+    if value=$(detect_from_config); then
+        TARGET_BRANCH="$value"
+        TARGET_SOURCE="git config pr-done.target"
+        return 0
+    fi
+    if value=$(detect_from_forge "$branch"); then
+        TARGET_BRANCH="$value"
+        TARGET_SOURCE="자동 감지: 머지된 PR/MR 의 base 브랜치"
+        return 0
+    fi
+    if value=$(detect_from_contains "$branch"); then
+        TARGET_BRANCH="$value"
+        TARGET_SOURCE="자동 감지: git 이력 추론"
+        return 0
+    fi
+    if value=$(detect_from_remote_head "$branch"); then
+        TARGET_BRANCH="$value"
+        TARGET_SOURCE="자동 감지: origin/HEAD"
+        return 0
+    fi
+    return 1
+}
+
+# ─────────────────────────────────────────────────────────────
+# 상태
+# ─────────────────────────────────────────────────────────────
+TARGET_BRANCH=""
+TARGET_SOURCE=""
 MERGED_BRANCH=""
+FORCE_EVIDENCE=""
+FETCH_OK=true
 DRY_RUN=false
 FORCE=false
 SKIP_CONFIRM=false
 
+# 테스트에서 함수만 로드할 때 사용한다 (아래 실행 흐름은 건너뛴다).
+if [[ -n "${GIT_PR_DONE_LIB_ONLY:-}" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+# ─────────────────────────────────────────────────────────────
+# 인자 파싱
+# ─────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -t|--target)
             [[ $# -ge 2 ]] || die "--target requires an argument" 1
+            [[ -n "$2" ]] || die "--target 에 빈 값은 쓸 수 없습니다." 1
             TARGET_BRANCH="$2"
+            TARGET_SOURCE="--target 옵션"
             shift 2
             ;;
         -b|--branch)
             [[ $# -ge 2 ]] || die "--branch requires an argument" 1
+            [[ -n "$2" ]] || die "--branch 에 빈 값은 쓸 수 없습니다." 1
             MERGED_BRANCH="$2"
             shift 2
             ;;
@@ -225,9 +483,12 @@ if [[ -n "$(git status --porcelain)" ]]; then
     exit 2
 fi
 
-# 4. 타겟 == 삭제 대상 방지
-if [[ "$TARGET_BRANCH" == "$MERGED_BRANCH" ]]; then
-    die "타겟 브랜치와 삭제 브랜치가 동일합니다: '$TARGET_BRANCH'" 2
+# ── 여기까지는 MERGED_BRANCH 만으로 판정 가능한 검사다.
+#    타겟 감지는 네트워크를 쓰므로, 이런 로컬 검사를 모두 통과한 뒤에 한다.
+
+# 4. 삭제 대상 브랜치 존재 확인
+if ! git show-ref --verify --quiet "refs/heads/$MERGED_BRANCH"; then
+    die "삭제 대상 브랜치가 존재하지 않습니다: '$MERGED_BRANCH'" 1
 fi
 
 # 5. 보호 브랜치 삭제 차단
@@ -235,16 +496,74 @@ if is_protected_branch "$MERGED_BRANCH"; then
     die "보호 브랜치는 삭제할 수 없습니다: '$MERGED_BRANCH'" 2
 fi
 
-# 6. 타겟 브랜치 로컬 존재 확인
+# 6. 원격 참조 갱신
+#    타겟 감지(3단계 이력 추론)와 머지 증거 검증이 모두 원격 참조를 읽으므로,
+#    낡은 참조로 잘못 판정하지 않도록 먼저 갱신한다.
+#    오프라인이면 실패해도 진행하되, 그 사실을 기억해 두고 사전 검증을 건너뛴다.
+FETCH_OK=true
+if ! git fetch --prune --quiet origin 2>/dev/null; then
+    FETCH_OK=false
+    log_warn "원격 참조를 갱신하지 못했습니다. 로컬 정보만으로 진행합니다."
+fi
+
+# 7. 타겟 브랜치 결정
+#    --target 이 없으면 삭제 대상 브랜치가 실제로 머지된 곳을 찾는다.
+if [[ -z "$TARGET_BRANCH" ]]; then
+    log_info "타겟 브랜치 감지 중... ${C_DIM}(${MERGED_BRANCH})${C_NC}"
+    if ! resolve_target_branch "$MERGED_BRANCH"; then
+        log_error "'${MERGED_BRANCH}' 이(가) 머지된 타겟 브랜치를 찾지 못했습니다."
+        echo "" >&2
+        echo "  확인한 경로:" >&2
+        echo "    1) git config pr-done.target        (설정 없음)" >&2
+        echo "    2) gh / glab 의 머지된 PR·MR 조회   (실패 또는 미설치)" >&2
+        echo "    3) git 이력 추론                    (머지 흔적 없음)" >&2
+        echo "    4) origin/HEAD                      (없거나 머지 흔적 없음)" >&2
+        echo "" >&2
+        echo "  해결:" >&2
+        echo "    • 이번만 지정  : git pr-done --target <branch>" >&2
+        echo "    • 저장소에 고정: git config pr-done.target <branch>" >&2
+        echo "    • origin 기본값 설정: git remote set-head origin -a" >&2
+        exit 2
+    fi
+    log_ok "타겟 브랜치: ${C_GREEN}${TARGET_BRANCH}${C_NC} ${C_DIM}(${TARGET_SOURCE})${C_NC}"
+fi
+
+# 8. 타겟 == 삭제 대상 방지
+if [[ "$TARGET_BRANCH" == "$MERGED_BRANCH" ]]; then
+    die "타겟 브랜치와 삭제 브랜치가 동일합니다: '$TARGET_BRANCH'" 2
+fi
+
+# 9. 타겟 브랜치 로컬 존재 확인
 if ! git show-ref --verify --quiet "refs/heads/$TARGET_BRANCH"; then
     log_error "타겟 브랜치가 로컬에 존재하지 않습니다: '$TARGET_BRANCH'"
+    if [[ "$TARGET_SOURCE" != "--target 옵션" ]]; then
+        echo "  이 값은 직접 지정한 게 아니라 감지된 값입니다 (출처: ${TARGET_SOURCE})" >&2
+        echo "  다르다면 --target 으로 직접 지정하세요." >&2
+    fi
     echo "  먼저 가져오세요: git fetch origin $TARGET_BRANCH:$TARGET_BRANCH" >&2
     exit 1
 fi
 
-# 7. 삭제 대상 브랜치 존재 확인
-if ! git show-ref --verify --quiet "refs/heads/$MERGED_BRANCH"; then
-    die "삭제 대상 브랜치가 존재하지 않습니다: '$MERGED_BRANCH'" 1
+# 10. 머지 증거 사전 검증
+#     checkout/pull 로 사용자를 옮기기 전에 확인한다. 실행 후에 알려주면
+#     이미 다른 브랜치로 이동한 상태에서 실패를 통보받게 된다.
+if $FORCE; then
+    # --force 라도 실제 머지 증거 없이는 삭제하지 않는다.
+    # fetch 실패 여부와 무관하게 항상 확인한다 (거부는 안전한 실패이므로).
+    if ! find_merge_evidence "$MERGED_BRANCH" "$TARGET_BRANCH"; then
+        log_error "머지 증거가 없어 강제 삭제를 거부합니다: '${MERGED_BRANCH}'"
+        report_unmerged_commits "$MERGED_BRANCH" "$TARGET_BRANCH"
+        exit 4
+    fi
+    log_ok "머지 확인: ${C_DIM}${FORCE_EVIDENCE}${C_NC}"
+elif $FETCH_OK; then
+    # fetch 가 성공했을 때만 미리 판정한다.
+    # 오프라인이면 원격 참조가 낡아 거짓 거부가 날 수 있으므로 실행 단계 검증에 맡긴다.
+    if ! is_merged_into "$MERGED_BRANCH" "$(merge_check_ref "$TARGET_BRANCH")"; then
+        log_error "'${MERGED_BRANCH}' 이(가) '${TARGET_BRANCH}' 에 머지되지 않았습니다."
+        report_unmerged_commits "$MERGED_BRANCH" "$TARGET_BRANCH"
+        exit 4
+    fi
 fi
 
 # ─────────────────────────────────────────────────────────────
@@ -257,7 +576,7 @@ ${C_BOLD}═══════════════════════�
 ${C_BOLD}═══════════════════════════════════════════════${C_NC}
   저장소        : ${C_DIM}${REPO_ROOT}${C_NC}
   현재 브랜치   : ${CURRENT_BRANCH}
-  타겟 브랜치   : ${C_GREEN}${TARGET_BRANCH}${C_NC}
+  타겟 브랜치   : ${C_GREEN}${TARGET_BRANCH}${C_NC} ${C_DIM}(${TARGET_SOURCE})${C_NC}
   삭제 브랜치   : ${C_YELLOW}${MERGED_BRANCH}${C_NC}
   강제 삭제     : $($FORCE && echo "${C_RED}YES${C_NC}" || echo "no")
   Dry-run       : $($DRY_RUN && echo "${C_BLUE}YES${C_NC}" || echo "no")
@@ -329,15 +648,7 @@ else
             git branch -d "$MERGED_BRANCH"
     else
         log_error "'${MERGED_BRANCH}'이(가) '${TARGET_BRANCH}'에 머지되지 않은 것으로 보입니다."
-        echo "" >&2
-        echo "  가능한 원인:" >&2
-        echo "    • squash/rebase 머지 (커밋 해시가 달라 탐지 불가)" >&2
-        echo "    • PR이 아직 머지되지 않음" >&2
-        echo "    • 타겟 브랜치가 잘못 지정됨" >&2
-        echo "" >&2
-        echo "  해결:" >&2
-        echo "    • PR 상태 확인 후 --force 로 재실행" >&2
-        echo "    • 또는 다른 타겟 지정: --target <branch>" >&2
+        report_unmerged_commits "$MERGED_BRANCH" "$TARGET_BRANCH"
         exit 4
     fi
 fi
