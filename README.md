@@ -37,7 +37,37 @@ git branch -d my-feature     # 4
 | 3 | `git pull --ff-only` | Download the merged result so your copy is current |
 | 4 | `git branch -d <yours>` | Delete your finished branch from your computer |
 
-Nothing here touches the server. Everything happens on your own machine, so the worst case is that you re-download something.
+None of this deletes anything on the server. It all happens on your own machine, so the
+worst case is that you download something again.
+
+### What happens when you run it
+
+The run has two halves. The first half only looks at things. The second half changes them,
+and it does not start until you say yes.
+
+**First half — checking. Nothing of yours is changed.**
+
+| | It makes sure that… | If not |
+|---|---|---|
+| 1 | you are inside a git repository | stops |
+| 2 | you are standing on a branch | stops |
+| 3 | you have no unsaved changes | stops and lists them |
+| 4 | the branch you want to delete exists | stops |
+| 5 | that branch is not a protected one | stops |
+| 6 | *(reads the current branch list from the server)* | carries on with what it already knew |
+| 7 | it knows which branch to move to | stops and asks you |
+| 8 | that branch is not the one being deleted | stops |
+| 9 | that branch exists on your computer | stops |
+| 10 | your work really was merged into it | stops, and you stay on your own branch |
+
+Step 10 is the important one. If your branch was not merged, you find out **before** anything
+moves, so you are still standing where you started.
+
+**Second half — doing, after you confirm.** The four commands in the table above.
+
+> One caveat about step 6: it talks to the server *before* you are asked to confirm. If you
+> answer no at the prompt, nothing of yours is touched, but your local copy of the server's
+> branch list will already have been refreshed.
 
 ---
 
@@ -328,6 +358,18 @@ would be lost:
 ```
 
 Deleting truly unmerged work is left to you, deliberately.
+
+## When it stops, what it is telling you
+
+| Message | What happened | What to do |
+|---------|---------------|------------|
+| `커밋되지 않은 변경사항이 있습니다` | You have edits that are not saved into git | `git commit -am "..."` or `git stash push -u` |
+| `삭제 대상 브랜치가 존재하지 않습니다` | There is no branch by that name | Check the spelling with `git branch` |
+| `보호 브랜치는 삭제할 수 없습니다` | You asked it to delete `main`, `develop` and the like | Use `-b` to name the branch you actually meant |
+| `머지된 타겟 브랜치를 찾지 못했습니다` | It could not work out where your work went | `--target <branch>`, or save one with `git config pr-done.target <branch>` |
+| `타겟 브랜치가 로컬에 존재하지 않습니다` | The target exists on the server but not on your computer | `git fetch origin <branch>:<branch>` |
+| `… 에 머지되지 않았습니다` | Your branch has commits the target does not have | Check the pull request really is merged; if it was squash-merged, see `--force` above |
+| `머지 증거가 없어 강제 삭제를 거부합니다` | Even `--force` could not find proof of a merge | The listed commits exist nowhere else. Delete only if you are sure: `git branch -D <branch>` |
 
 ## Exit Codes
 
