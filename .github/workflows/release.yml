@@ -1,0 +1,74 @@
+name: Release
+
+# 태그를 푸시하면 테스트를 돌리고, 통과한 경우에만 릴리즈 초안을 만든다.
+#
+# 초안(draft)으로 만드는 이유:
+# 자동 생성 노트는 머지된 PR 목록이라 "무엇이 바뀌었나"는 알려주지만
+# "업그레이드 전에 무엇을 조심해야 하나"는 알려주지 못한다.
+# v1.1.0 처럼 동작이 바뀌는 릴리즈에서는 사람이 그 경고를 덧붙인 뒤 발행해야 한다.
+#
+# 워크플로 파일은 태그가 가리키는 커밋에 들어 있어야 동작한다.
+# 따라서 이 파일이 main 에 머지된 이후에 만든 태그부터 적용된다.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: 테스트
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bats 설치
+        run: npm install -g bats
+
+      - name: 문법 검사
+        run: |
+          bash -n git-pr-done
+          bash -n install.sh
+
+      - name: 태그와 스크립트 버전 일치 확인
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          script=$(sed -n 's/^readonly VERSION="\([^"]*\)".*/\1/p' git-pr-done | head -1)
+          echo "태그: ${tag}  스크립트: ${script}"
+          if [ "$tag" != "$script" ]; then
+            echo "::error::태그(v${tag})와 스크립트 버전(${script})이 다릅니다."
+            exit 1
+          fi
+
+      - name: 테스트
+        run: bats tests/
+
+  release:
+    name: 릴리즈 초안 생성
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 릴리즈 초안 생성
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --draft
+
+      - name: 안내
+        run: |
+          echo "### 릴리즈 초안이 만들어졌습니다" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "자동 생성된 노트는 머지된 PR 목록입니다." >> "$GITHUB_STEP_SUMMARY"
+          echo "동작이 바뀌는 변경이 있다면 업그레이드 주의사항을 덧붙인 뒤 발행하세요." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases" >> "$GITHUB_STEP_SUMMARY"
