@@ -144,6 +144,21 @@ git pr-done --target develop
 git config pr-done.target develop
 ```
 
+### If it cannot tell which host you are on
+
+GitHub and GitLab are treated exactly the same way. The host is recognised from your remote
+URL, which covers `github.com`, `gitlab.com`, and self-hosted instances whose address contains
+either name. Company hosts named something else (`git.acme.com`, `ghe.acme.com`) cannot be
+guessed, so tell it once:
+
+```bash
+git config pr-done.forge github     # or: gitlab
+```
+
+Without this it simply skips step 2 and carries on with steps 3 and 4. It never guesses wrong
+on purpose: if the host is misread, the command line tool refuses to answer and the step is
+skipped.
+
 ### Why "through GitHub or GitLab" is the accurate one
 
 If your team uses **squash merge** or **rebase merge** (very common), the merged commits on the server get new IDs. Your local git history has no way to see the connection, so guessing from history alone can fail. Asking GitHub or GitLab directly avoids that. This needs the [`gh`](https://cli.github.com) or [`glab`](https://gitlab.com/gitlab-org/cli) command line tool installed and logged in. It is optional. Without it the other three methods still work.

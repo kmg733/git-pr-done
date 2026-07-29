@@ -15,6 +15,9 @@ readonly VERSION="2.0.0"
 readonly PROTECTED_BRANCHES=(master main develop production staging)
 readonly PROTECTED_PREFIXES=(release/ hotfix/)
 
+# 같은 브랜치 이름으로 여러 번 머지됐을 수 있어 목록을 조금 넉넉히 받는다
+readonly FORGE_FETCH_LIMIT=20
+
 # 색상 (TTY일 때만)
 if [[ -t 1 ]]; then
     readonly C_RED=$'\033[0;31m'
@@ -55,6 +58,8 @@ ${C_BOLD}TARGET DETECTION${C_NC}
 
       1) ${C_GREEN}git config pr-done.target${C_NC}   저장소에 고정해 둔 값
       2) ${C_GREEN}gh${C_NC} / ${C_GREEN}glab${C_NC}                   머지된 PR·MR 의 base 브랜치 (가장 정확)
+         ${C_DIM}GitHub 과 GitLab 에 같은 규칙을 적용합니다. 사내 호스트처럼
+         이름으로 알 수 없으면 git config pr-done.forge 로 지정하세요.${C_NC}
       3) ${C_GREEN}git branch -r --contains${C_NC}    git 이력만으로 추론
       4) ${C_GREEN}origin/HEAD${C_NC}                 리모트 기본 브랜치 (머지 흔적이 있을 때만)
 
@@ -88,6 +93,9 @@ ${C_BOLD}EXAMPLES${C_NC}
 
     ${C_DIM}# 이 저장소의 타겟을 고정 (매번 -t 를 치기 싫을 때)${C_NC}
     git config pr-done.target develop
+
+    ${C_DIM}# 사내 호스트라 이름으로 GitHub/GitLab 을 알 수 없을 때${C_NC}
+    git config pr-done.forge github
 
     ${C_DIM}# 특정 브랜치 삭제 (다른 브랜치 체크아웃 상태에서도 가능)${C_NC}
     git pr-done --branch 'feature-kmg733(SF2RC-2122)'
@@ -236,38 +244,83 @@ detect_from_config() {
     printf '%s\n' "$value"
 }
 
-# origin 리모트가 어느 호스팅인지 판별
-forge_kind() {
-    local url
-    url=$(git remote get-url origin 2>/dev/null) || return 1
+# 리모트 URL 에서 호스트 부분만 떼어낸다.
+# 저장소 이름으로 판단하면 gitlab.com/acme/github-tools 같은 경우를 잘못 읽는다.
+forge_host() {
+    local url="$1"
     case "$url" in
-        *github.com*|*github.*) printf 'github\n' ;;
-        *gitlab*)               printf 'gitlab\n' ;;
-        *)                      return 1 ;;
+        *://*)
+            url="${url#*://}"     # scheme 제거
+            url="${url#*@}"       # user@ 제거
+            url="${url%%/*}"      # 경로 제거
+            url="${url%%:*}"      # 포트 제거
+            ;;
+        *@*:*)
+            url="${url#*@}"       # scp 문법 user@host:path
+            url="${url%%:*}"
+            ;;
+        *)
+            : ;;                  # 로컬 경로 등은 문자열 전체로 판단
+    esac
+    printf '%s\n' "$url"
+}
+
+# origin 리모트가 어느 호스팅인지 판별한다.
+# GitHub 과 GitLab 에 같은 규칙을 적용한다.
+forge_kind() {
+    local url host value
+
+    # 이름만으로 알 수 없는 사내 호스트를 위한 탈출구 (두 호스팅 공통)
+    value=$(git config --get pr-done.forge 2>/dev/null) || value=""
+    case "$value" in
+        github|gitlab) printf '%s\n' "$value"; return 0 ;;
+        "")            : ;;
+        *)             log_warn "pr-done.forge 값이 올바르지 않습니다: '$value' (github 또는 gitlab)" ;;
+    esac
+
+    url=$(git remote get-url origin 2>/dev/null) || return 1
+    host=$(forge_host "$url")
+    case "$host" in
+        *github*) printf 'github\n' ;;
+        *gitlab*) printf 'gitlab\n' ;;
+        *)        return 1 ;;
     esac
 }
 
-# glab JSON 응답에서 첫 항목의 "target_branch sha" 추출
-parse_mr_json_jq() {
+# ─────────────────────────────────────────────────────────────
+# 머지 목록 파싱
+#
+# gh 와 glab 은 같은 모양의 JSON 배열을 내보내고 키 이름만 다르다.
+#   GitHub : baseRefName   headRefOid  mergedAt
+#   GitLab : target_branch sha         merged_at
+# 키를 인자로 받아 하나의 선택 규칙을 두 호스팅에 똑같이 적용한다.
+# ─────────────────────────────────────────────────────────────
+
+# 가장 최근에 머지된 항목의 "base sha" 를 반환한다.
+#   pick_latest_merge <json> <base_key> <sha_key> <date_key>
+pick_latest_merge_jq() {
     local value
-    value=$(printf '%s' "$1" \
-        | jq -r '.[0] // empty | "\(.target_branch) \(.sha)"' 2>/dev/null) || return 1
+    value=$(printf '%s' "$1" | jq -r --arg b "$2" --arg s "$3" --arg d "$4" '
+        map(select(.[$d] != null))
+        | sort_by(.[$d])
+        | last // empty
+        | "\(.[$b]) \(.[$s])"' 2>/dev/null) || return 1
     [[ -n "$value" ]] || return 1
     printf '%s\n' "$value"
 }
 
-# jq 가 없는 환경용 폴백.
-# sed 의 .* 는 탐욕적이라 한 줄에 항목이 여럿이면 마지막 것을 집는다.
-# grep -o 로 먼저 잘라낸 뒤 첫 번째만 쓴다.
-parse_mr_json_sed() {
+# jq 가 없는 환경용 폴백. 정렬은 못 하므로 첫 항목을 쓴다.
+# 두 호스팅에 똑같이 적용되며, 서버가 정렬해 준 순서에 의존한다.
+pick_latest_merge_sed() {
     local json="$1" base sha
-    base=$(json_first_string "$json" "target_branch")
-    sha=$(json_first_string "$json" "sha")
+    base=$(json_first_string "$json" "$2")
+    sha=$(json_first_string "$json" "$3")
     [[ -n "$base" ]] || return 1
     printf '%s %s\n' "$base" "$sha"
 }
 
-# JSON 문자열에서 지정 키의 첫 번째 값을 꺼낸다 (폴백 전용, 중첩은 다루지 않음)
+# JSON 문자열에서 지정 키의 첫 번째 값을 꺼낸다 (폴백 전용, 중첩은 다루지 않음).
+# sed 의 .* 는 탐욕적이라 항목이 여럿이면 마지막 것을 집으므로 grep -o 로 먼저 자른다.
 json_first_string() {
     printf '%s' "$1" \
         | grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
@@ -275,11 +328,11 @@ json_first_string() {
         | sed 's/.*:[[:space:]]*"\([^"]*\)"$/\1/' || true
 }
 
-parse_mr_json() {
+pick_latest_merge() {
     if command -v jq >/dev/null 2>&1; then
-        parse_mr_json_jq "$1"
+        pick_latest_merge_jq "$@"
     else
-        parse_mr_json_sed "$1"
+        pick_latest_merge_sed "$@"
     fi
 }
 
@@ -304,18 +357,27 @@ query_forge() {
 
     kind=$(forge_kind) || return 1
 
+    # 두 호스팅 모두: 머지된 목록을 JSON 으로 받아 같은 규칙으로 하나를 고른다.
+    # 한 건만 받지 않는 이유는 같은 브랜치 이름으로 여러 번 머지될 수 있고,
+    # gh 에는 정렬 옵션이 없어 "첫 번째"가 "가장 최근 머지"가 아니기 때문이다.
     case "$kind" in
         github)
             command -v gh >/dev/null 2>&1 || return 1
-            out=$(gh pr list --head "$branch" --state merged \
-                      --json baseRefName,mergedAt,headRefOid --limit 1 \
-                      --jq '.[0] // empty | "\(.baseRefName) \(.headRefOid)"' 2>/dev/null) || return 1
+            # gh 에는 --order 가 없다. 대신 gh 내장 jq 로 미리 정렬시킨다.
+            # 그래야 외부 jq 가 없는 환경에서도 GitLab(--order) 과 같은 순서를 받는다.
+            json=$(gh pr list --head "$branch" --state merged \
+                       --json baseRefName,headRefOid,mergedAt \
+                       --limit "$FORGE_FETCH_LIMIT" \
+                       --jq 'map(select(.mergedAt != null)) | sort_by(.mergedAt) | reverse' \
+                       2>/dev/null) || return 1
+            out=$(pick_latest_merge "$json" baseRefName headRefOid mergedAt) || return 1
             ;;
         gitlab)
             command -v glab >/dev/null 2>&1 || return 1
             json=$(glab mr list --source-branch "$branch" --merged \
-                       --order merged_at --per-page 1 --output json 2>/dev/null) || return 1
-            out=$(parse_mr_json "$json") || return 1
+                       --order merged_at --per-page "$FORGE_FETCH_LIMIT" \
+                       --output json 2>/dev/null) || return 1
+            out=$(pick_latest_merge "$json" target_branch sha merged_at) || return 1
             ;;
         *)
             return 1

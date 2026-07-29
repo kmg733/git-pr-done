@@ -25,7 +25,7 @@ setup_merged_feature() {
 @test "an explicit target skips auto detection" {
     setup_merged_feature
     use_github_remote
-    stub_gh "printf 'main\n'"
+    stub_gh_merged "main" "abc1234"
 
     run "$GIT_PR_DONE" --target develop --dry-run
     [ "$status" -eq 0 ]
@@ -70,7 +70,7 @@ setup_merged_feature() {
     push_all
     git checkout --quiet "feat"
     use_github_remote
-    stub_gh "printf 'main\n'"
+    stub_gh_merged "main" "$(git rev-parse feat)"
 
     run "$GIT_PR_DONE" --dry-run
     [ "$status" -eq 0 ]
@@ -82,7 +82,7 @@ setup_merged_feature() {
 @test "a dirty tree aborts before any detection happens" {
     setup_merged_feature
     use_github_remote
-    stub_gh "printf 'main\n'"
+    stub_gh_merged "main" "abc1234"
     echo "dirty" >> file.txt
 
     run "$GIT_PR_DONE" --dry-run
@@ -136,7 +136,7 @@ setup_merged_feature() {
 @test "an empty --target is rejected instead of silently auto detecting" {
     setup_merged_feature
     use_github_remote
-    stub_gh "printf 'main\n'"
+    stub_gh_merged "main" "abc1234"
 
     run "$GIT_PR_DONE" --target "" --dry-run
     [ "$status" -eq 1 ]
@@ -160,7 +160,7 @@ setup_merged_feature() {
 @test "a missing --branch is reported before detection runs" {
     setup_merged_feature
     use_github_remote
-    stub_gh "printf 'main\n'"
+    stub_gh_merged "main" "abc1234"
 
     run "$GIT_PR_DONE" --branch "no-such-branch" --dry-run
     [ "$status" -eq 1 ]
@@ -173,7 +173,7 @@ setup_merged_feature() {
     setup_merged_feature
     git checkout --quiet main
     use_github_remote
-    stub_gh "printf 'develop\n'"
+    stub_gh_merged "develop" "abc1234"
 
     run "$GIT_PR_DONE" --dry-run
     [ "$status" -eq 2 ]

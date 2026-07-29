@@ -121,15 +121,18 @@ STUB
     chmod +x "$STUB_BIN/gh"
 }
 
-# 머지된 PR 이 있는 gh 스텁.
-# 프로덕션 코드가 --jq 로 "base<공백>headSHA" 한 줄을 받아내는 형태를 흉내낸다.
+# 머지된 PR 이 있는 gh 스텁. gh 는 JSON 배열을 그대로 내보낸다.
+#   stub_gh_merged <base> <sha> [mergedAt]
 stub_gh_merged() {
-    stub_gh "printf '%s %s\n' '$1' '$2'"
+    local at="${3:-2026-01-01T00:00:00Z}"
+    stub_gh "printf '%s\n' '[{\"baseRefName\":\"$1\",\"headRefOid\":\"$2\",\"mergedAt\":\"$at\"}]'"
 }
 
-# 머지된 MR 이 있는 glab 스텁. glab 은 JSON 배열을 그대로 내보낸다.
+# 머지된 MR 이 있는 glab 스텁. glab 도 JSON 배열을 그대로 내보낸다.
+#   stub_glab_merged <base> <sha> [merged_at]
 stub_glab_merged() {
-    stub_glab "printf '%s\n' '[{\"target_branch\":\"$1\",\"sha\":\"$2\",\"title\":\"x\"}]'"
+    local at="${3:-2026-01-01T00:00:00Z}"
+    stub_glab "printf '%s\n' '[{\"target_branch\":\"$1\",\"sha\":\"$2\",\"merged_at\":\"$at\",\"title\":\"x\"}]'"
 }
 
 # glab 스텁 설치.

@@ -33,6 +33,55 @@ teardown() {
 }
 
 # ─────────────────────────────────────────────────────────────
+# 호스팅 판별 — GitHub 과 GitLab 이 같은 규칙으로 인식되어야 한다
+# ─────────────────────────────────────────────────────────────
+
+expect_forge() {
+    git remote set-url origin "$1"
+    run forge_kind
+    [ "$output" = "$2" ]
+}
+
+@test "forge_kind recognises the public hosts" {
+    expect_forge "https://github.com/acme/repo.git" "github"
+    expect_forge "https://gitlab.com/acme/repo.git" "gitlab"
+    expect_forge "git@github.com:acme/repo.git"     "github"
+    expect_forge "git@gitlab.com:acme/repo.git"     "gitlab"
+}
+
+@test "forge_kind recognises self hosted instances symmetrically" {
+    expect_forge "https://github.acme.com/x/y.git" "github"
+    expect_forge "https://gitlab.acme.com/x/y.git" "gitlab"
+    expect_forge "https://mygithub-host/x/y.git"   "github"
+    expect_forge "https://mygitlab-host/x/y.git"   "gitlab"
+}
+
+# 저장소 이름에 다른 호스팅 이름이 들어가도 호스트로만 판단해야 한다
+@test "forge_kind judges by host, not by repository name" {
+    expect_forge "https://gitlab.com/acme/github-tools.git" "gitlab"
+    expect_forge "https://github.com/acme/gitlab-runner.git" "github"
+    expect_forge "git@gitlab.com:acme/github-tools.git" "gitlab"
+}
+
+# 이름으로 알 수 없는 호스트는 설정으로 지정할 수 있다 (두 호스팅 공통 탈출구)
+@test "forge_kind honours an explicit pr-done.forge setting" {
+    git remote set-url origin "https://ghe.acme.com/x/y.git"
+    git config pr-done.forge "github"
+    run forge_kind
+    [ "$output" = "github" ]
+
+    git config pr-done.forge "gitlab"
+    run forge_kind
+    [ "$output" = "gitlab" ]
+}
+
+@test "forge_kind fails on an unknown host with no setting" {
+    git remote set-url origin "https://git.acme.com/x/y.git"
+    run forge_kind
+    [ "$status" -ne 0 ]
+}
+
+# ─────────────────────────────────────────────────────────────
 # 2단계: gh / glab 으로 실제 머지된 PR·MR 조회
 # ─────────────────────────────────────────────────────────────
 
@@ -65,7 +114,7 @@ teardown() {
     [ "$(gh_args | wc -l | tr -d ' ')" -eq 1 ]
 }
 
-# query_forge: 머지된 PR 만, head SHA 까지 요청한다
+# query_forge: 머지된 PR 만, head SHA 와 머지 시각까지 요청한다
 @test "query_forge asks only for merged PRs and includes the head SHA" {
     use_github_remote
     stub_gh_merged "develop" "abc1234"
@@ -75,6 +124,35 @@ teardown() {
     [[ "$(gh_args)" == *"--state merged"* ]]
     [[ "$(gh_args)" == *"--head feature-x"* ]]
     [[ "$(gh_args)" == *"headRefOid"* ]]
+    [[ "$(gh_args)" == *"mergedAt"* ]]
+}
+
+# gh 에는 --order 가 없으므로 내장 jq 로 정렬을 시켜야
+# 외부 jq 가 없는 환경에서도 GitLab 과 같은 순서를 받는다
+@test "query_forge makes gh sort by merge date server side" {
+    use_github_remote
+    stub_gh_merged "develop" "abc1234"
+
+    query_forge "feature-x"
+
+    [[ "$(gh_args)" == *"sort_by(.mergedAt)"* ]]
+}
+
+# 폴백(정렬 불가) 경로도 두 호스팅이 같은 순서를 전제로 동작한다
+@test "pick_latest_merge_sed takes the first entry of an already sorted list" {
+    run pick_latest_merge_sed '[{"baseRefName":"new","headRefOid":"bbb"},{"baseRefName":"old","headRefOid":"aaa"}]' baseRefName headRefOid mergedAt
+    [ "$status" -eq 0 ]
+    [ "$output" = "new bbb" ]
+}
+
+# 같은 이름으로 여러 번 머지된 경우 GitHub 에서도 가장 최근 머지를 고른다
+@test "query_forge picks the most recent merge on GitHub too" {
+    use_github_remote
+    stub_gh "printf '%s\n' '[{\"baseRefName\":\"old\",\"headRefOid\":\"aaa\",\"mergedAt\":\"2025-01-01T00:00:00Z\"},{\"baseRefName\":\"new\",\"headRefOid\":\"bbb\",\"mergedAt\":\"2026-06-01T00:00:00Z\"}]'"
+
+    query_forge "feature-x"
+    [ "$FORGE_BASE" = "new" ]
+    [ "$FORGE_HEAD_OID" = "bbb" ]
 }
 
 # query_forge: 머지된 PR 이 없으면 실패한다
@@ -86,10 +164,10 @@ teardown() {
     [ "$status" -ne 0 ]
 }
 
-# query_forge: gh 가 null 을 반환하면 실패한다
-@test "query_forge fails when gh returns null" {
+# query_forge: gh 가 빈 배열을 반환하면 실패한다
+@test "query_forge fails when gh returns an empty list" {
     use_github_remote
-    stub_gh "printf 'null null\n'"
+    stub_gh "printf '%s\n' '[]'"
 
     run query_forge "feature-x"
     [ "$status" -ne 0 ]
@@ -161,34 +239,78 @@ teardown() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# glab JSON 파싱 (jq 경로 / sed 폴백 경로) — target_branch + sha
+# 머지 목록 파싱 — GitHub 과 GitLab 이 같은 함수를 통과한다
+# 키 이름만 다르고 (baseRefName/headRefOid/mergedAt vs
+# target_branch/sha/merged_at) 선택 규칙은 동일해야 한다
 # ─────────────────────────────────────────────────────────────
 
-@test "parse_mr_json_jq reads the first target_branch and sha" {
-    run parse_mr_json_jq '[{"target_branch":"develop","sha":"abc123","title":"x"}]'
+GH_KEYS="baseRefName headRefOid mergedAt"
+GL_KEYS="target_branch sha merged_at"
+
+@test "pick_latest_merge reads a single GitHub entry" {
+    run pick_latest_merge '[{"baseRefName":"develop","headRefOid":"abc123","mergedAt":"2026-01-01T00:00:00Z"}]' $GH_KEYS
     [ "$status" -eq 0 ]
     [ "$output" = "develop abc123" ]
 }
 
-@test "parse_mr_json_jq fails on an empty list" {
-    run parse_mr_json_jq '[]'
+@test "pick_latest_merge reads a single GitLab entry" {
+    run pick_latest_merge '[{"target_branch":"develop","sha":"abc123","merged_at":"2026-01-01T00:00:00Z"}]' $GL_KEYS
+    [ "$status" -eq 0 ]
+    [ "$output" = "develop abc123" ]
+}
+
+# 같은 브랜치 이름으로 여러 번 머지된 경우, 두 호스팅 모두 가장 최근 머지를 골라야 한다
+@test "pick_latest_merge picks the most recent merge on GitHub" {
+    run pick_latest_merge '[{"baseRefName":"old","headRefOid":"aaa","mergedAt":"2025-01-01T00:00:00Z"},{"baseRefName":"new","headRefOid":"bbb","mergedAt":"2026-06-01T00:00:00Z"}]' $GH_KEYS
+    [ "$status" -eq 0 ]
+    [ "$output" = "new bbb" ]
+}
+
+@test "pick_latest_merge picks the most recent merge on GitLab" {
+    run pick_latest_merge '[{"target_branch":"old","sha":"aaa","merged_at":"2025-01-01T00:00:00Z"},{"target_branch":"new","sha":"bbb","merged_at":"2026-06-01T00:00:00Z"}]' $GL_KEYS
+    [ "$status" -eq 0 ]
+    [ "$output" = "new bbb" ]
+}
+
+# 입력 순서와 무관하게 같은 답이 나와야 한다
+@test "pick_latest_merge ignores the order the forge returned" {
+    run pick_latest_merge '[{"baseRefName":"new","headRefOid":"bbb","mergedAt":"2026-06-01T00:00:00Z"},{"baseRefName":"old","headRefOid":"aaa","mergedAt":"2025-01-01T00:00:00Z"}]' $GH_KEYS
+    [ "$status" -eq 0 ]
+    [ "$output" = "new bbb" ]
+}
+
+# 아직 머지되지 않은 항목은 후보에서 뺀다
+@test "pick_latest_merge skips entries that were never merged" {
+    run pick_latest_merge '[{"baseRefName":"open","headRefOid":"aaa","mergedAt":null},{"baseRefName":"done","headRefOid":"bbb","mergedAt":"2026-06-01T00:00:00Z"}]' $GH_KEYS
+    [ "$status" -eq 0 ]
+    [ "$output" = "done bbb" ]
+}
+
+@test "pick_latest_merge fails on an empty GitHub list" {
+    run pick_latest_merge '[]' $GH_KEYS
     [ "$status" -ne 0 ]
 }
 
-@test "parse_mr_json_sed reads the first target_branch and sha" {
-    run parse_mr_json_sed '[{"target_branch":"develop","sha":"abc123","title":"x"}]'
+@test "pick_latest_merge fails on an empty GitLab list" {
+    run pick_latest_merge '[]' $GL_KEYS
+    [ "$status" -ne 0 ]
+}
+
+# jq 가 없는 환경용 폴백. 정렬은 못 하지만 두 호스팅에 똑같이 적용된다
+@test "pick_latest_merge_sed reads a GitHub entry" {
+    run pick_latest_merge_sed '[{"baseRefName":"develop","headRefOid":"abc123"}]' $GH_KEYS
     [ "$status" -eq 0 ]
     [ "$output" = "develop abc123" ]
 }
 
-@test "parse_mr_json_sed picks the first entry when several are returned" {
-    run parse_mr_json_sed '[{"target_branch":"develop","sha":"aaa"},{"target_branch":"main","sha":"bbb"}]'
+@test "pick_latest_merge_sed reads a GitLab entry" {
+    run pick_latest_merge_sed '[{"target_branch":"develop","sha":"abc123"}]' $GL_KEYS
     [ "$status" -eq 0 ]
-    [ "$output" = "develop aaa" ]
+    [ "$output" = "develop abc123" ]
 }
 
-@test "parse_mr_json_sed fails on an empty list" {
-    run parse_mr_json_sed '[]'
+@test "pick_latest_merge_sed fails on an empty list" {
+    run pick_latest_merge_sed '[]' $GH_KEYS
     [ "$status" -ne 0 ]
 }
 
@@ -337,7 +459,7 @@ teardown() {
 @test "resolve_target_branch prefers config over gh" {
     use_github_remote
     git config pr-done.target "release/2026-H1"
-    stub_gh "printf 'develop\n'"
+    stub_gh_merged "develop" "abc1234"
 
     resolve_target_branch "feature-x"
     [ "$TARGET_BRANCH" = "release/2026-H1" ]
@@ -347,7 +469,7 @@ teardown() {
 # resolve_target_branch: config 가 없으면 gh 결과를 쓴다
 @test "resolve_target_branch uses the gh result when config is unset" {
     use_github_remote
-    stub_gh "printf 'develop\n'"
+    stub_gh_merged "develop" "abc1234"
 
     resolve_target_branch "feature-x"
     [ "$TARGET_BRANCH" = "develop" ]

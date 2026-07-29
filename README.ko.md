@@ -138,6 +138,16 @@ git pr-done --target develop
 git config pr-done.target develop
 ```
 
+### 어느 호스팅인지 알 수 없을 때
+
+GitHub과 GitLab은 완전히 같은 방식으로 다룬다. 리모트 URL의 호스트로 판별하므로 `github.com`, `gitlab.com`은 물론 주소에 그 이름이 들어간 사내 인스턴스도 인식한다. 이름이 전혀 다른 사내 호스트(`git.acme.com`, `ghe.acme.com`)는 추측할 수 없으니 한 번만 알려주면 된다.
+
+```bash
+git config pr-done.forge github     # 또는: gitlab
+```
+
+지정하지 않아도 2단계를 건너뛰고 3·4단계로 진행할 뿐이다. 호스팅을 잘못 읽어도 해당 CLI가 응답을 거부하므로 잘못된 답이 나오지는 않는다.
+
 ### GitHub/GitLab에 물어보는 방법이 정확한 이유
 
 팀이 **squash 머지**나 **rebase 머지**를 쓰면(흔하다) 서버에서 합쳐진 커밋에 새 ID가 붙는다. 내 컴퓨터의 git 이력에는 그 연결고리가 남지 않아서, 이력만으로 추측하는 방법은 실패할 수 있다. GitHub이나 GitLab에 직접 물어보면 이 문제가 없다. 이 방법을 쓰려면 [`gh`](https://cli.github.com) 또는 [`glab`](https://gitlab.com/gitlab-org/cli)이 설치되고 로그인되어 있어야 한다. 필수는 아니다. 없어도 나머지 세 가지 방법은 그대로 동작한다.
