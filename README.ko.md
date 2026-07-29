@@ -173,6 +173,7 @@ git config pr-done.forge github     # 또는: gitlab
 
 - Bash 3.2+
 - Git 2.x+
+- `curl` 또는 `wget` — 설치와 `--upgrade` 에만 필요
 - 선택: [`gh`](https://cli.github.com) (GitHub) 또는 [`glab`](https://gitlab.com/gitlab-org/cli) (GitLab) — 가장 정확한 타겟 감지에 사용
 
 ## 설치
@@ -245,6 +246,7 @@ git pr-done
 | `-n, --dry-run` | 계획만 표시, 변경 없음 | `false` |
 | `-f, --force` | git 이력에 흔적이 없어도 삭제 (머지 증거는 필요) | `false` |
 | `-y, --yes` | 확인 프롬프트 생략 | `false` |
+| `-u, --upgrade` | 최신 버전으로 자기 자신을 업데이트 | — |
 | `-h, --help` | 도움말 | — |
 | `-V, --version` | 버전 | — |
 
@@ -272,6 +274,9 @@ git pr-done --force
 
 # 확인 프롬프트 없이
 git pr-done -y
+
+# 최신 버전으로 업데이트
+git pr-done --upgrade
 ```
 
 > **참고**: git은 `git <명령> --help`를 가로채 매뉴얼 페이지를 연다. `git pr-done -h` 또는 `git-pr-done --help`를 쓴다.
@@ -329,7 +334,7 @@ git pr-done --force
 | `0` | 성공 |
 | `1` | 일반 에러 (git 저장소 아님, 브랜치 없음 등) |
 | `2` | 사전 검증 실패 (커밋 안 된 변경, 보호 브랜치, 타겟 감지 실패) |
-| `3` | 프롬프트에서 취소함 |
+| `3` | 프롬프트에서 취소함 (정리 또는 `--upgrade`) |
 | `4` | git 명령 실패, 또는 머지 증거가 없어 삭제를 거부함 |
 
 ## 권장 워크플로우
@@ -344,6 +349,12 @@ gh pr create   # 또는 GitLab MR
 
 # 3. 서버에서 머지된 후
 git pr-done    # 한 줄 정리
+```
+
+가끔 최신 버전을 받아둔다.
+
+```bash
+git pr-done --upgrade
 ```
 
 ## v1.0에서 올라올 때

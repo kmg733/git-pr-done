@@ -185,6 +185,7 @@ If your team uses **squash merge** or **rebase merge** (very common), the merged
 
 - Bash 3.2+
 - Git 2.x+
+- `curl` or `wget` — only for installing and for `--upgrade`
 - Optional: [`gh`](https://cli.github.com) (GitHub) or [`glab`](https://gitlab.com/gitlab-org/cli) (GitLab) for the most accurate target detection
 
 ## Installation
@@ -257,6 +258,7 @@ git pr-done
 | `-n, --dry-run` | Show the plan, change nothing | `false` |
 | `-f, --force` | Delete when git history shows no trace, but the merge is proven | `false` |
 | `-y, --yes` | Skip the confirmation prompt | `false` |
+| `-u, --upgrade` | Update itself to the latest version | — |
 | `-h, --help` | Show help | — |
 | `-V, --version` | Show version | — |
 
@@ -284,6 +286,9 @@ git pr-done --force
 
 # No confirmation prompt
 git pr-done -y
+
+# Update to the latest version
+git pr-done --upgrade
 ```
 
 > **Note**: Git intercepts `git <cmd> --help` and opens a manual page. Use `git pr-done -h` or `git-pr-done --help`.
@@ -348,7 +353,7 @@ Deleting truly unmerged work is left to you, deliberately.
 | `0` | Success |
 | `1` | Generic error (not a git repository, branch missing, and so on) |
 | `2` | Pre-flight check failed (uncommitted changes, protected branch, target not detected) |
-| `3` | You canceled at the prompt |
+| `3` | You canceled at a prompt (cleanup or `--upgrade`) |
 | `4` | A git command failed, or a deletion was refused for lack of merge proof |
 
 ## Recommended Workflow
@@ -363,6 +368,12 @@ gh pr create   # or a GitLab merge request
 
 # 3. Once it is merged on the server
 git pr-done    # one-line cleanup
+```
+
+Once in a while, pick up the latest version:
+
+```bash
+git pr-done --upgrade
 ```
 
 ## Upgrading from v1.0
