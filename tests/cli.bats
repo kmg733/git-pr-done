@@ -364,3 +364,96 @@ setup_merged_feature() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"1.1.0"* ]]
 }
+
+# ─────────────────────────────────────────────────────────────
+# --upgrade : 설치된 자기 자신을 최신으로 교체한다
+# ─────────────────────────────────────────────────────────────
+
+# 설치본을 흉내내기 위해 스크립트를 임시 위치에 복사하고,
+# curl 을 스텁으로 대체해 지정한 버전을 내려받은 것처럼 만든다.
+setup_upgrade_fixture() {
+    INSTALLED="$TEST_TMP/bin-installed/git-pr-done"
+    mkdir -p "$(dirname "$INSTALLED")"
+    sed "s/^readonly VERSION=.*/readonly VERSION=\"$1\"/" "$GIT_PR_DONE" > "$INSTALLED"
+    chmod 755 "$INSTALLED"
+
+    SERVED="$TEST_TMP/served"
+    sed "s/^readonly VERSION=.*/readonly VERSION=\"$2\"/" "$GIT_PR_DONE" > "$SERVED"
+
+    cat > "$STUB_BIN/curl" <<STUB
+#!/usr/bin/env bash
+dest=""; prev=""
+for a in "\$@"; do [[ "\$prev" == "-o" ]] && dest="\$a"; prev="\$a"; done
+printf '%s\n' "\$*" >> "$TEST_TMP/curl-args.log"
+[[ -n "\$dest" ]] && cp "$SERVED" "\$dest" || cat "$SERVED"
+STUB
+    chmod +x "$STUB_BIN/curl"
+}
+
+@test "--upgrade replaces the installed script with the newer one" {
+    setup_upgrade_fixture "1.0.0" "9.9.9"
+
+    run "$INSTALLED" --upgrade -y
+    [ "$status" -eq 0 ]
+    [ "$("$INSTALLED" --version | awk '{print $2}')" = "9.9.9" ]
+    [ -x "$INSTALLED" ]
+}
+
+@test "--upgrade keeps the current version when it is already latest" {
+    setup_upgrade_fixture "1.0.0" "1.0.0"
+
+    run "$INSTALLED" --upgrade -y
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"최신"* ]]
+    [ "$("$INSTALLED" --version | awk '{print $2}')" = "1.0.0" ]
+}
+
+# 내려받은 것이 이 스크립트가 아니면 교체하지 않는다
+@test "--upgrade refuses a download that is not git-pr-done" {
+    setup_upgrade_fixture "1.0.0" "9.9.9"
+    printf '<html>404</html>\n' > "$SERVED"
+
+    run "$INSTALLED" --upgrade -y
+    [ "$status" -ne 0 ]
+    [ "$("$INSTALLED" --version | awk '{print $2}')" = "1.0.0" ]
+}
+
+# 다운로드가 실패해도 기존 파일이 손상되지 않아야 한다
+@test "--upgrade leaves the script intact when the download fails" {
+    setup_upgrade_fixture "1.0.0" "9.9.9"
+    printf '#!/usr/bin/env bash\nexit 22\n' > "$STUB_BIN/curl"
+    chmod +x "$STUB_BIN/curl"
+
+    run "$INSTALLED" --upgrade -y
+    [ "$status" -ne 0 ]
+    [ "$("$INSTALLED" --version | awk '{print $2}')" = "1.0.0" ]
+}
+
+# git 저장소 밖에서도 동작해야 한다 (업데이트는 저장소와 무관)
+@test "--upgrade works outside a git repository" {
+    setup_upgrade_fixture "1.0.0" "9.9.9"
+    mkdir -p "$TEST_TMP/not-a-repo"
+    cd "$TEST_TMP/not-a-repo"
+
+    run "$INSTALLED" --upgrade -y
+    [ "$status" -eq 0 ]
+    [ "$("$INSTALLED" --version | awk '{print $2}')" = "9.9.9" ]
+}
+
+# 확인 프롬프트에서 거절하면 교체하지 않는다
+@test "--upgrade does nothing when the user declines" {
+    setup_upgrade_fixture "1.0.0" "9.9.9"
+
+    run bash -c "printf 'n\n' | '$INSTALLED' --upgrade"
+    [ "$status" -eq 3 ]
+    [ "$("$INSTALLED" --version | awk '{print $2}')" = "1.0.0" ]
+}
+
+# --ref 로 내려받을 참조를 바꿀 수 있다
+@test "--upgrade honours the PR_DONE_REF override" {
+    setup_upgrade_fixture "1.0.0" "9.9.9"
+
+    PR_DONE_REF="v1.0.0" run "$INSTALLED" --upgrade -y
+    [ "$status" -eq 0 ]
+    [[ "$(cat "$TEST_TMP/curl-args.log")" == *"v1.0.0"* ]]
+}

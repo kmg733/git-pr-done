@@ -14,6 +14,7 @@ readonly SCRIPT_NAME="git-pr-done"
 readonly VERSION="1.1.0"
 readonly PROTECTED_BRANCHES=(master main develop production staging)
 readonly PROTECTED_PREFIXES=(release/ hotfix/)
+readonly UPGRADE_REPO="kmg733/git-pr-done"
 
 # 같은 브랜치 이름으로 여러 번 머지됐을 수 있어 목록을 조금 넉넉히 받는다
 readonly FORGE_FETCH_LIMIT=20
@@ -80,6 +81,7 @@ ${C_BOLD}OPTIONS${C_NC}
                              gh/glab 이 알려준 PR head 커밋과 브랜치 끝을 대조하므로,
                              같은 이름의 과거 PR 이나 머지 후 추가한 커밋은 통과하지 못합니다.
     -y, --yes                확인 프롬프트 스킵
+    -u, --upgrade            최신 버전으로 자기 자신을 업데이트
     -h, --help               이 도움말 출력
     -V, --version            버전 출력
 
@@ -111,6 +113,9 @@ ${C_BOLD}EXAMPLES${C_NC}
 
     ${C_DIM}# 확인 프롬프트 없이 즉시 실행${C_NC}
     git pr-done -y
+
+    ${C_DIM}# 최신 버전으로 업데이트${C_NC}
+    git pr-done --upgrade
 
 ${C_BOLD}SAFETY${C_NC}
     • 보호 브랜치는 삭제 거부: ${PROTECTED_BRANCHES[*]}
@@ -222,6 +227,93 @@ report_unmerged_commits() {
     echo "" >&2
     echo "  위 커밋을 잃어도 괜찮다고 판단되면 직접 실행하세요:" >&2
     echo "    git branch -D '${branch}'" >&2
+}
+
+# ─────────────────────────────────────────────────────────────
+# 자체 업데이트
+# ─────────────────────────────────────────────────────────────
+
+# 실행 중인 이 파일의 절대 경로
+self_path() {
+    local p="${BASH_SOURCE[0]}"
+    case "$p" in
+        /*) printf '%s\n' "$p" ;;
+        *)  printf '%s\n' "$(cd "$(dirname "$p")" && pwd)/$(basename "$p")" ;;
+    esac
+}
+
+# 내려받은 파일이 정말 이 스크립트인지 확인한다.
+# 404 HTML 이나 잘린 응답으로 자신을 덮어쓰면 복구가 어렵다.
+looks_like_self() {
+    local file="$1"
+    head -1 "$file" | grep -q '^#!.*bash' || return 1
+    grep -q '^readonly SCRIPT_NAME="git-pr-done"' "$file" || return 1
+    grep -q '^readonly VERSION=' "$file" || return 1
+}
+
+version_in_file() {
+    sed -n 's/^readonly VERSION="\([^"]*\)".*/\1/p' "$1" | head -1
+}
+
+fetch_url() {
+    local url="$1" dest="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$url" -o "$dest"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "$dest" "$url"
+    else
+        log_error "curl 또는 wget 이 필요합니다."
+        return 1
+    fi
+}
+
+do_upgrade() {
+    local ref url target tmp new_version answer
+    ref="${PR_DONE_REF:-main}"
+    url="https://raw.githubusercontent.com/${UPGRADE_REPO}/${ref}/${SCRIPT_NAME}"
+    target=$(self_path)
+
+    if [[ -L "$target" ]]; then
+        die "심볼릭 링크로 실행되고 있어 자동 교체하지 않습니다: ${target}
+  링크가 가리키는 파일을 직접 업데이트하세요." 1
+    fi
+    if [[ ! -w "$target" ]]; then
+        die "쓰기 권한이 없습니다: ${target}
+  sudo 로 다시 실행하거나 설치 스크립트를 쓰세요." 1
+    fi
+
+    tmp=$(mktemp)
+    # shellcheck disable=SC2064
+    trap "rm -f '$tmp'" EXIT
+
+    log_info "최신 버전 확인 중... ${C_DIM}(${ref})${C_NC}"
+    fetch_url "$url" "$tmp" || die "다운로드에 실패했습니다: ${url}" 4
+    looks_like_self "$tmp" \
+        || die "내려받은 파일이 ${SCRIPT_NAME} 이 아닙니다. PR_DONE_REF 값을 확인하세요." 4
+
+    new_version=$(version_in_file "$tmp")
+    if [[ "$new_version" == "$VERSION" ]]; then
+        log_ok "이미 최신입니다 (${VERSION})"
+        exit 0
+    fi
+
+    echo "  현재 ${C_BOLD}${VERSION}${C_NC} → 최신 ${C_BOLD}${new_version}${C_NC}"
+    echo "  위치: ${C_DIM}${target}${C_NC}"
+    if ! $SKIP_CONFIRM; then
+        read -r -p "업데이트할까요? [y/N] " answer
+        case "$answer" in
+            [yY]|[yY][eE][sS]) ;;
+            *) log_warn "취소됨."; exit 3 ;;
+        esac
+    fi
+
+    # 원자적 교체: 완성된 파일을 만든 뒤 옮긴다
+    cp "$tmp" "${target}.new"
+    chmod 755 "${target}.new"
+    mv -f "${target}.new" "$target"
+
+    log_ok "업데이트 완료: ${VERSION} → ${C_BOLD}${new_version}${C_NC}"
+    exit 0
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -513,6 +605,7 @@ FORGE_HEAD_OID=""
 DRY_RUN=false
 FORCE=false
 SKIP_CONFIRM=false
+DO_UPGRADE=false
 
 # 테스트에서 함수만 로드할 때 사용한다 (아래 실행 흐름은 건너뛴다).
 if [[ -n "${GIT_PR_DONE_LIB_ONLY:-}" ]]; then
@@ -549,6 +642,10 @@ while [[ $# -gt 0 ]]; do
             SKIP_CONFIRM=true
             shift
             ;;
+        -u|--upgrade)
+            DO_UPGRADE=true
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
@@ -573,6 +670,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# 업데이트는 저장소와 무관하므로 사전 검증 앞에서 처리한다
+if $DO_UPGRADE; then
+    do_upgrade
+fi
 
 # ─────────────────────────────────────────────────────────────
 # 사전 검증
