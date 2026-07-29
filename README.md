@@ -72,23 +72,21 @@ moves, so you are still standing where you started.
 
 ## Quick Start
 
-### 1. Install (macOS & Linux)
+### 1. Install
+
+One command. It picks the right folder, makes the file executable, and puts it on your PATH.
 
 ```bash
-mkdir -p ~/.local/bin && \
-  curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
-  -o ~/.local/bin/git-pr-done && \
-  chmod +x ~/.local/bin/git-pr-done
+curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/install.sh | bash
 ```
 
-Windows (Git Bash):
+Then open a new terminal (or run the `source` line it prints) and check:
 
 ```bash
-mkdir -p ~/bin && \
-  curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
-  -o ~/bin/git-pr-done && \
-  chmod +x ~/bin/git-pr-done
+git pr-done --version
 ```
+
+Works on macOS, Linux, WSL, and Git Bash on Windows. Needs `bash` and `git`, nothing else.
 
 ### 2. Use it
 
@@ -99,7 +97,13 @@ git pr-done
 
 It shows you exactly what it is about to do, waits for you to say yes, then does it.
 
-### 3. Options you will actually use
+### 3. Keep it up to date
+
+```bash
+git pr-done --upgrade
+```
+
+### 4. Options you will actually use
 
 ```bash
 git pr-done --dry-run           # Show the plan, touch nothing of yours
@@ -181,109 +185,60 @@ If your team uses **squash merge** or **rebase merge** (very common), the merged
 
 - Bash 3.2+
 - Git 2.x+
+- `curl` or `wget` — only for installing and for `--upgrade`
 - Optional: [`gh`](https://cli.github.com) (GitHub) or [`glab`](https://gitlab.com/gitlab-org/cli) (GitLab) for the most accurate target detection
 
 ## Installation
 
-### macOS
-
-macOS ships with bash and git. If git is missing, install it with `xcode-select --install` or [Homebrew](https://brew.sh).
+### The short way
 
 ```bash
-# 1) Download and install
-mkdir -p ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/install.sh | bash
+```
+
+| What it does | |
+|---|---|
+| Install location | `~/.local/bin` (`~/bin` on Git Bash), or `--dir <path>` |
+| PATH | Adds it to your shell startup file, only if it is not already there |
+| Re-running it | Updates an existing install; says so if you already have the latest |
+| Update later | `git pr-done --upgrade` |
+| Remove | `curl -fsSL .../install.sh \| bash -s -- --uninstall` |
+
+Options: `--dir <path>`, `--ref <branch-or-tag>`, `--no-path`, `--uninstall`.
+
+### If you would rather not pipe into bash
+
+Download it, read it, then run it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/install.sh -o install.sh
+less install.sh
+bash install.sh
+```
+
+### By hand
+
+The tool is a single bash file with no dependencies, so copying it anywhere on your PATH works:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
   -o ~/.local/bin/git-pr-done
 chmod +x ~/.local/bin/git-pr-done
-
-# 2) Make sure ~/.local/bin is on PATH
-echo $PATH | tr ':' '\n' | grep -q "$HOME/.local/bin" || \
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-
-# 3) Reload the shell and check
-source ~/.zshrc
-git pr-done --version
 ```
 
-Alternative location: `/usr/local/bin/git-pr-done` (Homebrew layout; no sudo needed if you own it).
-
-### Linux
-
-Most distributions include bash and git already. If not:
+If `~/.local/bin` is not on your PATH yet, add this to `~/.zshrc` or `~/.bashrc`:
 
 ```bash
-# Debian/Ubuntu
-sudo apt install git
-
-# RHEL/Fedora/CentOS
-sudo dnf install git
-
-# Arch
-sudo pacman -S git
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Install the script:
+### Requirements per platform
 
-```bash
-# 1) Download and install
-mkdir -p ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
-  -o ~/.local/bin/git-pr-done
-chmod +x ~/.local/bin/git-pr-done
-
-# 2) Make sure ~/.local/bin is on PATH
-echo $PATH | tr ':' '\n' | grep -q "$HOME/.local/bin" || \
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-
-# 3) Reload the shell and check
-source ~/.bashrc
-git pr-done --version
-```
-
-If you use zsh, replace `~/.bashrc` with `~/.zshrc`.
-
-### Windows
-
-You need **Git Bash** (bundled with Git for Windows) or **WSL**. It does not run in PowerShell or CMD.
-
-#### Option 1: Git Bash (recommended)
-
-1. Install [Git for Windows](https://git-scm.com/download/win), which includes Git Bash
-2. Open **Git Bash**
-3. Run:
-
-```bash
-# 1) Download and install
-mkdir -p ~/bin
-curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
-  -o ~/bin/git-pr-done
-chmod +x ~/bin/git-pr-done
-
-# 2) Git Bash already has ~/bin on PATH, nothing else to do
-git pr-done --version
-```
-
-> **Note**: Git Bash automatically puts `~/bin` (which is `C:\Users\<USER>\bin`) on PATH.
-
-#### Option 2: WSL (Ubuntu)
-
-If you have WSL, follow the **Linux** section as written.
-
-```powershell
-# From PowerShell
-wsl
-
-# Then follow the Linux install steps
-```
-
-#### Option 3: Manual (Git Bash)
-
-```bash
-cd ~/Downloads
-git clone https://github.com/kmg733/git-pr-done.git
-cp git-pr-done/git-pr-done ~/bin/
-chmod +x ~/bin/git-pr-done
-```
+| Platform | Notes |
+|----------|-------|
+| macOS | bash and git are already there. If git is missing: `xcode-select --install` |
+| Linux | Install git if needed: `apt install git` / `dnf install git` / `pacman -S git` |
+| Windows | Use **Git Bash** (comes with [Git for Windows](https://git-scm.com/download/win)) or WSL. It does not run in PowerShell or CMD |
 
 ## Usage
 
@@ -303,6 +258,7 @@ git pr-done
 | `-n, --dry-run` | Show the plan, change nothing | `false` |
 | `-f, --force` | Delete when git history shows no trace, but the merge is proven | `false` |
 | `-y, --yes` | Skip the confirmation prompt | `false` |
+| `-u, --upgrade` | Update itself to the latest version | — |
 | `-h, --help` | Show help | — |
 | `-V, --version` | Show version | — |
 
@@ -330,6 +286,9 @@ git pr-done --force
 
 # No confirmation prompt
 git pr-done -y
+
+# Update to the latest version
+git pr-done --upgrade
 ```
 
 > **Note**: Git intercepts `git <cmd> --help` and opens a manual page. Use `git pr-done -h` or `git-pr-done --help`.
@@ -394,7 +353,7 @@ Deleting truly unmerged work is left to you, deliberately.
 | `0` | Success |
 | `1` | Generic error (not a git repository, branch missing, and so on) |
 | `2` | Pre-flight check failed (uncommitted changes, protected branch, target not detected) |
-| `3` | You canceled at the prompt |
+| `3` | You canceled at a prompt (cleanup or `--upgrade`) |
 | `4` | A git command failed, or a deletion was refused for lack of merge proof |
 
 ## Recommended Workflow
@@ -411,11 +370,17 @@ gh pr create   # or a GitLab merge request
 git pr-done    # one-line cleanup
 ```
 
-## Upgrading from v1.x
+Once in a while, pick up the latest version:
 
-In v1.x, running `git pr-done` with no `-t` always moved you to `develop`, whether or not that was where your work went.
+```bash
+git pr-done --upgrade
+```
 
-v2.0 detects the real target instead. If detection fails it stops rather than falling back to `develop`. To keep the old behaviour in a given project:
+## Upgrading from v1.0
+
+In v1.0, running `git pr-done` with no `-t` always moved you to `develop`, whether or not that was where your work went.
+
+v1.1 detects the real target instead. If detection fails it stops rather than falling back to `develop`. To keep the old behaviour in a given project:
 
 ```bash
 git config pr-done.target develop
