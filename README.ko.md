@@ -68,23 +68,21 @@ git branch -d my-feature     # 4
 
 ## 빠른 시작
 
-### 1. 설치 (macOS & Linux)
+### 1. 설치
+
+명령 하나면 된다. 알맞은 폴더를 골라 파일을 받고, 실행 권한을 주고, PATH에 등록하는 것까지 알아서 한다.
 
 ```bash
-mkdir -p ~/.local/bin && \
-  curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
-  -o ~/.local/bin/git-pr-done && \
-  chmod +x ~/.local/bin/git-pr-done
+curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/install.sh | bash
 ```
 
-Windows (Git Bash):
+새 터미널을 열거나 안내에 나온 `source` 줄을 실행한 뒤 확인한다.
 
 ```bash
-mkdir -p ~/bin && \
-  curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
-  -o ~/bin/git-pr-done && \
-  chmod +x ~/bin/git-pr-done
+git pr-done --version
 ```
+
+macOS, Linux, WSL, Windows Git Bash에서 동작한다. `bash`와 `git` 외에 필요한 것이 없다.
 
 ### 2. 사용
 
@@ -95,7 +93,13 @@ git pr-done
 
 무엇을 할 것인지 먼저 보여주고, 진행할지 물어본 뒤에 실행한다.
 
-### 3. 자주 쓰는 옵션
+### 3. 최신 상태 유지
+
+```bash
+git pr-done --upgrade
+```
+
+### 4. 자주 쓰는 옵션
 
 ```bash
 git pr-done --dry-run           # 계획만 보여주고 내 것은 건드리지 않음
@@ -169,109 +173,60 @@ git config pr-done.forge github     # 또는: gitlab
 
 - Bash 3.2+
 - Git 2.x+
+- `curl` 또는 `wget` — 설치와 `--upgrade` 에만 필요
 - 선택: [`gh`](https://cli.github.com) (GitHub) 또는 [`glab`](https://gitlab.com/gitlab-org/cli) (GitLab) — 가장 정확한 타겟 감지에 사용
 
 ## 설치
 
-### macOS
-
-macOS에는 bash와 git이 기본 포함되어 있다. git이 없으면 `xcode-select --install` 또는 [Homebrew](https://brew.sh)로 설치한다.
+### 짧은 방법
 
 ```bash
-# 1) 다운로드 및 설치
-mkdir -p ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/install.sh | bash
+```
+
+| 무엇을 하나 | |
+|---|---|
+| 설치 위치 | `~/.local/bin` (Git Bash는 `~/bin`), 또는 `--dir <경로>` |
+| PATH | 셸 시작 파일에 등록. 이미 있으면 건너뜀 |
+| 다시 실행하면 | 기존 설치를 업데이트. 이미 최신이면 그렇다고 알려줌 |
+| 나중에 업데이트 | `git pr-done --upgrade` |
+| 제거 | `curl -fsSL .../install.sh \| bash -s -- --uninstall` |
+
+옵션: `--dir <경로>`, `--ref <브랜치/태그>`, `--no-path`, `--uninstall`
+
+### 파이프로 실행하는 게 꺼려진다면
+
+내려받아 내용을 확인한 뒤 실행하면 된다.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/install.sh -o install.sh
+less install.sh
+bash install.sh
+```
+
+### 직접 설치
+
+의존성 없는 bash 파일 하나이므로, PATH에 있는 아무 위치에나 복사하면 동작한다.
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
   -o ~/.local/bin/git-pr-done
 chmod +x ~/.local/bin/git-pr-done
-
-# 2) ~/.local/bin이 PATH에 있는지 확인
-echo $PATH | tr ':' '\n' | grep -q "$HOME/.local/bin" || \
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-
-# 3) 셸 재시작 후 확인
-source ~/.zshrc
-git pr-done --version
 ```
 
-다른 위치: `/usr/local/bin/git-pr-done` (Homebrew 구조, 소유권이 있으면 sudo 불필요)
-
-### Linux
-
-대부분의 배포판에는 bash와 git이 이미 들어 있다. 없다면:
+`~/.local/bin`이 아직 PATH에 없다면 `~/.zshrc`나 `~/.bashrc`에 아래를 추가한다.
 
 ```bash
-# Debian/Ubuntu
-sudo apt install git
-
-# RHEL/Fedora/CentOS
-sudo dnf install git
-
-# Arch
-sudo pacman -S git
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-스크립트 설치:
+### 플랫폼별 준비물
 
-```bash
-# 1) 다운로드 및 설치
-mkdir -p ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
-  -o ~/.local/bin/git-pr-done
-chmod +x ~/.local/bin/git-pr-done
-
-# 2) ~/.local/bin이 PATH에 있는지 확인
-echo $PATH | tr ':' '\n' | grep -q "$HOME/.local/bin" || \
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-
-# 3) 셸 재시작 후 확인
-source ~/.bashrc
-git pr-done --version
-```
-
-zsh를 쓴다면 `~/.bashrc`를 `~/.zshrc`로 바꾼다.
-
-### Windows
-
-**Git Bash**(Git for Windows에 포함) 또는 **WSL**이 필요하다. PowerShell이나 CMD에서는 실행되지 않는다.
-
-#### 방법 1: Git Bash (권장)
-
-1. [Git for Windows](https://git-scm.com/download/win) 설치 (Git Bash 포함)
-2. **Git Bash** 실행
-3. 아래 실행:
-
-```bash
-# 1) 다운로드 및 설치
-mkdir -p ~/bin
-curl -fsSL https://raw.githubusercontent.com/kmg733/git-pr-done/main/git-pr-done \
-  -o ~/bin/git-pr-done
-chmod +x ~/bin/git-pr-done
-
-# 2) Git Bash는 ~/bin을 PATH에 자동 추가하므로 추가 설정 불필요
-git pr-done --version
-```
-
-> **참고**: Git Bash는 `~/bin`(= `C:\Users\<USER>\bin`)을 PATH 앞에 자동으로 넣는다.
-
-#### 방법 2: WSL (Ubuntu)
-
-WSL이 있다면 **Linux** 절차를 그대로 따르면 된다.
-
-```powershell
-# PowerShell에서
-wsl
-
-# 이후 Linux 설치 단계 진행
-```
-
-#### 방법 3: 수동 설치 (Git Bash)
-
-```bash
-cd ~/Downloads
-git clone https://github.com/kmg733/git-pr-done.git
-cp git-pr-done/git-pr-done ~/bin/
-chmod +x ~/bin/git-pr-done
-```
+| 플랫폼 | 참고 |
+|--------|------|
+| macOS | bash와 git이 기본 포함. git이 없으면 `xcode-select --install` |
+| Linux | 필요하면 git 설치: `apt install git` / `dnf install git` / `pacman -S git` |
+| Windows | **Git Bash**([Git for Windows](https://git-scm.com/download/win) 포함) 또는 WSL. PowerShell·CMD에서는 실행되지 않음 |
 
 ## 사용법
 
@@ -291,6 +246,7 @@ git pr-done
 | `-n, --dry-run` | 계획만 표시, 변경 없음 | `false` |
 | `-f, --force` | git 이력에 흔적이 없어도 삭제 (머지 증거는 필요) | `false` |
 | `-y, --yes` | 확인 프롬프트 생략 | `false` |
+| `-u, --upgrade` | 최신 버전으로 자기 자신을 업데이트 | — |
 | `-h, --help` | 도움말 | — |
 | `-V, --version` | 버전 | — |
 
@@ -318,6 +274,9 @@ git pr-done --force
 
 # 확인 프롬프트 없이
 git pr-done -y
+
+# 최신 버전으로 업데이트
+git pr-done --upgrade
 ```
 
 > **참고**: git은 `git <명령> --help`를 가로채 매뉴얼 페이지를 연다. `git pr-done -h` 또는 `git-pr-done --help`를 쓴다.
@@ -375,7 +334,7 @@ git pr-done --force
 | `0` | 성공 |
 | `1` | 일반 에러 (git 저장소 아님, 브랜치 없음 등) |
 | `2` | 사전 검증 실패 (커밋 안 된 변경, 보호 브랜치, 타겟 감지 실패) |
-| `3` | 프롬프트에서 취소함 |
+| `3` | 프롬프트에서 취소함 (정리 또는 `--upgrade`) |
 | `4` | git 명령 실패, 또는 머지 증거가 없어 삭제를 거부함 |
 
 ## 권장 워크플로우
@@ -392,11 +351,17 @@ gh pr create   # 또는 GitLab MR
 git pr-done    # 한 줄 정리
 ```
 
-## v1.x에서 올라올 때
+가끔 최신 버전을 받아둔다.
 
-v1.x에서는 `-t` 없이 `git pr-done`을 실행하면 내 작업이 어디로 갔든 항상 `develop`으로 이동했다.
+```bash
+git pr-done --upgrade
+```
 
-v2.0은 실제 타겟을 감지한다. 감지에 실패하면 `develop`으로 넘어가는 대신 멈춘다. 특정 프로젝트에서 예전 동작을 유지하려면:
+## v1.0에서 올라올 때
+
+v1.0에서는 `-t` 없이 `git pr-done`을 실행하면 내 작업이 어디로 갔든 항상 `develop`으로 이동했다.
+
+v1.1은 실제 타겟을 감지한다. 감지에 실패하면 `develop`으로 넘어가는 대신 멈춘다. 특정 프로젝트에서 예전 동작을 유지하려면:
 
 ```bash
 git config pr-done.target develop
