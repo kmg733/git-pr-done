@@ -358,9 +358,9 @@ setup_merged_feature() {
     [[ "$output" != *"기본: develop"* ]]
 }
 
-# --version 은 2.0.0 이다
-@test "version reports 2.0.0" {
+# --version 은 1.1.0 이다
+@test "version reports 1.1.0" {
     run "$GIT_PR_DONE" --version
     [ "$status" -eq 0 ]
-    [[ "$output" == *"2.0.0"* ]]
+    [[ "$output" == *"1.1.0"* ]]
 }

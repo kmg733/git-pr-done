@@ -411,11 +411,11 @@ gh pr create   # or a GitLab merge request
 git pr-done    # one-line cleanup
 ```
 
-## Upgrading from v1.x
+## Upgrading from v1.0
 
-In v1.x, running `git pr-done` with no `-t` always moved you to `develop`, whether or not that was where your work went.
+In v1.0, running `git pr-done` with no `-t` always moved you to `develop`, whether or not that was where your work went.
 
-v2.0 detects the real target instead. If detection fails it stops rather than falling back to `develop`. To keep the old behaviour in a given project:
+v1.1 detects the real target instead. If detection fails it stops rather than falling back to `develop`. To keep the old behaviour in a given project:
 
 ```bash
 git config pr-done.target develop

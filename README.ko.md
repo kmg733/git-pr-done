@@ -392,11 +392,11 @@ gh pr create   # 또는 GitLab MR
 git pr-done    # 한 줄 정리
 ```
 
-## v1.x에서 올라올 때
+## v1.0에서 올라올 때
 
-v1.x에서는 `-t` 없이 `git pr-done`을 실행하면 내 작업이 어디로 갔든 항상 `develop`으로 이동했다.
+v1.0에서는 `-t` 없이 `git pr-done`을 실행하면 내 작업이 어디로 갔든 항상 `develop`으로 이동했다.
 
-v2.0은 실제 타겟을 감지한다. 감지에 실패하면 `develop`으로 넘어가는 대신 멈춘다. 특정 프로젝트에서 예전 동작을 유지하려면:
+v1.1은 실제 타겟을 감지한다. 감지에 실패하면 `develop`으로 넘어가는 대신 멈춘다. 특정 프로젝트에서 예전 동작을 유지하려면:
 
 ```bash
 git config pr-done.target develop
